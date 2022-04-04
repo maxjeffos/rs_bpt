@@ -1,8 +1,10 @@
 use crate::{ClientId, TransactionId, TransactionType};
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum TransactionProcessingError {
     AmountNotSpecified,
+    ReferencedTransactionNotFound,
+    ReferencedTransactionIsNotDiputable,
     TransactionAlreadyHasPendingDisupte,
     TransactionDoesNotHavePendingDisupte,
 }
@@ -13,12 +15,23 @@ impl std::fmt::Display for TransactionProcessingError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TransactionProcessingError::AmountNotSpecified => write!(f, "AmountNotSpecified"),
-            TransactionProcessingError::TransactionAlreadyHasPendingDisupte => write!(f, "TransactionAlreadyHasPendingDisupte"),
-            TransactionProcessingError::TransactionDoesNotHavePendingDisupte => write!(f, "TransactionDoesNotHavePendingDisupte"),
+            TransactionProcessingError::ReferencedTransactionNotFound => {
+                write!(f, "ReferencedTransactionNotFound")
+            }
+            TransactionProcessingError::ReferencedTransactionIsNotDiputable => {
+                write!(f, "ReferencedTransactionIsNotDiputable")
+            }
+            TransactionProcessingError::TransactionAlreadyHasPendingDisupte => {
+                write!(f, "TransactionAlreadyHasPendingDisupte")
+            }
+            TransactionProcessingError::TransactionDoesNotHavePendingDisupte => {
+                write!(f, "TransactionDoesNotHavePendingDisupte")
+            }
         }
     }
 }
 
+#[derive(Debug)]
 struct Dispute {
     disputed_transaction_id: TransactionId,
     status: DisputeStatus,
@@ -41,16 +54,38 @@ impl Dispute {
     }
 }
 
+#[derive(Debug)]
 pub struct ClientTransaction {
     pub transaction_type: TransactionType,
     pub transaction_id: TransactionId,
-    pub amount: Option<f64>,  // Optional because dispute, resolve, and chargeback transactions do not have an amount
+    pub amount: Option<f64>, // Optional because dispute, resolve, and chargeback transactions do not have an amount
+}
+
+impl ClientTransaction {
+    fn new_deposit_transaction(transaction_id: TransactionId, amount: f64) -> Self {
+        Self {
+            transaction_type: TransactionType::Deposit,
+            transaction_id,
+            amount: Some(amount),
+        }
+    }
+
+    fn new_dispute_transaction(referenced_transaction_id: TransactionId) -> Self {
+        Self {
+            transaction_type: TransactionType::Dispute,
+            transaction_id: referenced_transaction_id,
+            amount: None,
+        }
+    }
 }
 
 #[derive(Debug)]
 pub struct ClientAccount {
     pub client: ClientId,
-    real_transactions: Vec<RealTransaction>,
+    // left off here - about to ransack this and replace real transactions with Vec<CLientTransaction> and then something else to handle disputes
+    transactions: Vec<ClientTransaction>,
+    disputes: Vec<Dispute>,
+    // real_transactions: Vec<RealTransaction>,
     pub balance: AccountBalance,
     pub locked: bool,
 }
@@ -59,7 +94,8 @@ impl ClientAccount {
     pub fn new(client: ClientId) -> Self {
         Self {
             client,
-            real_transactions: Vec::new(),
+            transactions: Vec::new(),
+            disputes: Vec::new(),
             balance: AccountBalance::new(),
             locked: false,
         }
@@ -74,12 +110,7 @@ impl ClientAccount {
             .ok_or(TransactionProcessingError::AmountNotSpecified)?;
 
         self.balance.available += amount;
-
-        self.real_transactions.push(RealTransaction {
-            transaction_id: transaction.transaction_id,
-            amount,
-            dispute_status: None,
-        });
+        self.transactions.push(transaction);
 
         Ok(())
     }
@@ -93,12 +124,8 @@ impl ClientAccount {
             .ok_or(TransactionProcessingError::AmountNotSpecified)?;
 
         self.balance.available -= amount;
+        self.transactions.push(transaction);
 
-        self.real_transactions.push(RealTransaction {
-            transaction_id: transaction.transaction_id,
-            amount: -amount,
-            dispute_status: None,
-        });
         Ok(())
     }
 
@@ -106,111 +133,189 @@ impl ClientAccount {
         &mut self,
         transaction: ClientTransaction,
     ) -> Result<(), TransactionProcessingError> {
-        let maybe_existing_transaction = self
-            .real_transactions
-            .iter_mut()
+        let maybe_referenced_transaction = self
+            .transactions
+            .iter()
             .find(|t| t.transaction_id == transaction.transaction_id);
 
-        if let Some(mut existing_transaction) = maybe_existing_transaction {
-            // println!("{:?}", existing_transaction);
+        println!("transaction_id: {}", transaction.transaction_id);
 
-            if let Some(existing_dispute_status) = existing_transaction.dispute_status {
-                if existing_dispute_status == DisputeStatus::Pending {
-                    return Err(TransactionProcessingError::TransactionAlreadyHasPendingDisupte);
+        if let Some(referenced_transaction) = maybe_referenced_transaction {
+            println!("referenced_transaction: {:?}", referenced_transaction);
+
+            match referenced_transaction.transaction_type {
+                TransactionType::Deposit => {
+                    let amount = referenced_transaction
+                        .amount
+                        .ok_or(TransactionProcessingError::AmountNotSpecified)?;
+
+                    println!("amount: {}", amount);
+
+                    self.balance.available -= amount;
+                    self.balance.held += amount;
+
+                    self.disputes.push(Dispute::new(transaction.transaction_id));
+                    self.transactions.push(transaction);
+
+                    Ok(())
+                }
+                TransactionType::Withdrawal => Ok(()),
+                TransactionType::Dispute => {
+                    Err(TransactionProcessingError::ReferencedTransactionIsNotDiputable)
+                }
+                TransactionType::Resolve => {
+                    Err(TransactionProcessingError::ReferencedTransactionIsNotDiputable)
+                }
+                TransactionType::Chargeback => {
+                    Err(TransactionProcessingError::ReferencedTransactionIsNotDiputable)
                 }
             }
-
-            let amount = existing_transaction.amount;
-            // println!("amount: {:?}", amount);
-
-            self.balance.available -= amount;
-            self.balance.held += amount;
-
-            // TODO: find a way to simplify this code by not having to do the if let Some twice
-            if let Some(mut existing_dispute_status) = existing_transaction.dispute_status {
-                if existing_dispute_status == DisputeStatus::Pending {
-                    // spec did not specify how to handle this so I'm returning an error
-                    return Err(TransactionProcessingError::TransactionAlreadyHasPendingDisupte);
-                } else {
-                    // TODO: there's a bug here - I'm not updating the actual dispute status
-                    // this is just a copy of the dispute status, not a reference to it
-                    existing_dispute_status = DisputeStatus::Pending;
-                }
-            } else {
-                existing_transaction
-                    .dispute_status
-                    .replace(DisputeStatus::Pending);
-
-                // existing_transaction.dispute_status = Some(DisputeStatus::Pending);
-            }
-        } // else spec says to ignore it
-
-        Ok(())
+        } else {
+            return Err(TransactionProcessingError::ReferencedTransactionNotFound);
+        }
     }
+
+    // fn procecss_dispute(
+    //     &mut self,
+    //     transaction: ClientTransaction,
+    // ) -> Result<(), TransactionProcessingError> {
+    //     let maybe_existing_transaction = self
+    //         .real_transactions
+    //         .iter_mut()
+    //         .find(|t| t.transaction_id == transaction.transaction_id);
+
+    //     if let Some(mut existing_transaction) = maybe_existing_transaction {
+    //         // println!("{:?}", existing_transaction);
+
+    //         if let Some(existing_dispute_status) = existing_transaction.dispute_status {
+    //             if existing_dispute_status == DisputeStatus::Pending {
+    //                 return Err(TransactionProcessingError::TransactionAlreadyHasPendingDisupte);
+    //             }
+    //         }
+
+    //         let amount = existing_transaction.amount;
+    //         // println!("amount: {:?}", amount);
+
+    //         self.balance.available -= amount;
+    //         self.balance.held += amount;
+
+    //         // TODO: find a way to simplify this code by not having to do the if let Some twice
+    //         if let Some(mut existing_dispute_status) = existing_transaction.dispute_status {
+    //             if existing_dispute_status == DisputeStatus::Pending {
+    //                 // spec did not specify how to handle this so I'm returning an error
+    //                 return Err(TransactionProcessingError::TransactionAlreadyHasPendingDisupte);
+    //             } else {
+    //                 // TODO: there's a bug here - I'm not updating the actual dispute status
+    //                 // this is just a copy of the dispute status, not a reference to it
+    //                 existing_dispute_status = DisputeStatus::Pending;
+    //             }
+    //         } else {
+    //             existing_transaction
+    //                 .dispute_status
+    //                 .replace(DisputeStatus::Pending);
+
+    //             // existing_transaction.dispute_status = Some(DisputeStatus::Pending);
+    //         }
+    //     } // else spec says to ignore it
+
+    //     Ok(())
+    // }
 
     fn procecss_resolve(
         &mut self,
         transaction: ClientTransaction,
     ) -> Result<(), TransactionProcessingError> {
-        // look up the referenced transaction
-        // make sure that it is under dispute (pending)
-        // make required adjustment to the client balance
-        // mark the dispute as resolved
-
-        let maybe_existing_transaction = self
-            .real_transactions
-            .iter_mut()
+        let maybe_referenced_transaction = self
+            .transactions
+            .iter()
             .find(|t| t.transaction_id == transaction.transaction_id);
 
-        if let Some(existing_transaction) = maybe_existing_transaction {
-            if let Some(mut existing_dispute_status) = existing_transaction.dispute_status {
-                if existing_dispute_status != DisputeStatus::Pending {
-                    // spec did not specify how to handle this so I'm returning an error
-                    return Err(TransactionProcessingError::TransactionDoesNotHavePendingDisupte);
-                }
-
-                let amount = existing_transaction.amount;
-                self.balance.available += amount;
-                self.balance.held -= amount;
-
-                existing_dispute_status = DisputeStatus::Resolved;
-            }
-        } // else spec says to ignore it
-
-        Ok(())
+        if maybe_referenced_transaction.is_some() {
+            Ok(())
+        } else {
+            Err(TransactionProcessingError::ReferencedTransactionNotFound)
+        }
     }
+
+    // fn procecss_resolve(
+    //     &mut self,
+    //     transaction: ClientTransaction,
+    // ) -> Result<(), TransactionProcessingError> {
+    //     // look up the referenced transaction
+    //     // make sure that it is under dispute (pending)
+    //     // make required adjustment to the client balance
+    //     // mark the dispute as resolved
+
+    //     let maybe_existing_transaction = self
+    //         .real_transactions
+    //         .iter_mut()
+    //         .find(|t| t.transaction_id == transaction.transaction_id);
+
+    //     if let Some(existing_transaction) = maybe_existing_transaction {
+    //         if let Some(mut existing_dispute_status) = existing_transaction.dispute_status {
+    //             if existing_dispute_status != DisputeStatus::Pending {
+    //                 // spec did not specify how to handle this so I'm returning an error
+    //                 return Err(TransactionProcessingError::TransactionDoesNotHavePendingDisupte);
+    //             }
+
+    //             let amount = existing_transaction.amount;
+    //             self.balance.available += amount;
+    //             self.balance.held -= amount;
+
+    //             existing_dispute_status = DisputeStatus::Resolved;
+    //         }
+    //     } // else spec says to ignore it
+
+    //     Ok(())
+    // }
 
     fn procecss_chargeback(
         &mut self,
         transaction: ClientTransaction,
     ) -> Result<(), TransactionProcessingError> {
-        // look up the referenced transaction
-        // make sure that it is under dispute (pending)
-        // make required adjustment to the client balance and lock the account
-        // mark the dispute as charged back
-
-        let maybe_existing_transaction = self
-            .real_transactions
-            .iter_mut()
+        let maybe_referenced_transaction = self
+            .transactions
+            .iter()
             .find(|t| t.transaction_id == transaction.transaction_id);
 
-        if let Some(existing_transaction) = maybe_existing_transaction {
-            if let Some(mut existing_dispute_status) = existing_transaction.dispute_status {
-                if existing_dispute_status != DisputeStatus::Pending {
-                    // spec did not specify how to handle this so I'm returning an error
-                    return Err(TransactionProcessingError::TransactionDoesNotHavePendingDisupte);
-                }
-
-                let amount = existing_transaction.amount;
-                self.balance.held -= amount;
-                self.locked = true;
-
-                existing_dispute_status = DisputeStatus::Resolved;
-            }
-        } // else spec says to ignore it
-
-        Ok(())
+        if maybe_referenced_transaction.is_some() {
+            Ok(())
+        } else {
+            Err(TransactionProcessingError::ReferencedTransactionNotFound)
+        }
     }
+
+    // fn procecss_chargeback(
+    //     &mut self,
+    //     transaction: ClientTransaction,
+    // ) -> Result<(), TransactionProcessingError> {
+    //     // look up the referenced transaction
+    //     // make sure that it is under dispute (pending)
+    //     // make required adjustment to the client balance and lock the account
+    //     // mark the dispute as charged back
+
+    //     let maybe_existing_transaction = self
+    //         .real_transactions
+    //         .iter_mut()
+    //         .find(|t| t.transaction_id == transaction.transaction_id);
+
+    //     if let Some(existing_transaction) = maybe_existing_transaction {
+    //         if let Some(mut existing_dispute_status) = existing_transaction.dispute_status {
+    //             if existing_dispute_status != DisputeStatus::Pending {
+    //                 // spec did not specify how to handle this so I'm returning an error
+    //                 return Err(TransactionProcessingError::TransactionDoesNotHavePendingDisupte);
+    //             }
+
+    //             let amount = existing_transaction.amount;
+    //             self.balance.held -= amount;
+    //             self.locked = true;
+
+    //             existing_dispute_status = DisputeStatus::Resolved;
+    //         }
+    //     } // else spec says to ignore it
+
+    //     Ok(())
+    // }
 
     pub fn process_transaction(
         &mut self,
@@ -287,6 +392,8 @@ mod tests {
 
         account.procecss_deposit(transaction).unwrap();
 
+        assert_eq!(account.transactions.len(), 1);
+        assert_eq!(account.disputes.len(), 0);
         assert_eq!(account.balance.available, 100.0);
         assert_eq!(account.balance.held, 0.0);
         assert_eq!(account.balance.total(), 100.0);
@@ -304,96 +411,128 @@ mod tests {
 
         account.procecss_withdrawal(transaction).unwrap();
 
+        assert_eq!(account.transactions.len(), 1);
+        assert_eq!(account.disputes.len(), 0);
         assert_eq!(account.balance.available, -100.0);
         assert_eq!(account.balance.held, 0.0);
         assert_eq!(account.balance.total(), -100.0);
     }
 
     #[test]
+    fn test_process_dispute_resolve_or_chargeback_with_no_matching_transaction_id() {
+        let mut account = ClientAccount::new(1);
+
+        // let res = account.procecss_dispute(ClientTransaction::new_dispute_transaction(1));
+        assert_eq!(
+            account.procecss_dispute(ClientTransaction::new_dispute_transaction(1)),
+            Err(TransactionProcessingError::ReferencedTransactionNotFound)
+        );
+
+        let res = account.procecss_resolve(ClientTransaction::new_dispute_transaction(1));
+        assert_eq!(
+            res,
+            Err(TransactionProcessingError::ReferencedTransactionNotFound)
+        );
+
+        let res = account.procecss_chargeback(ClientTransaction::new_dispute_transaction(1));
+        assert_eq!(
+            res,
+            Err(TransactionProcessingError::ReferencedTransactionNotFound)
+        );
+    }
+
+    #[test]
     fn test_process_dispute() {
         let mut account = ClientAccount::new(1);
 
-        account.real_transactions.push(RealTransaction {
-            transaction_id: 1,
-            amount: 100.0,
-            dispute_status: None,
-        });
-
-        let dispute_transaction = ClientTransaction {
-            transaction_type: TransactionType::Dispute,
-            transaction_id: 1,
-            amount: None,
-        };
-
-        // account.procecss_dispute(transaction)
-
-
-
-    }
-
-
-    #[test]
-    fn test_process_transaction_deposit_withdrawal() {
-        let mut account = ClientAccount::new(1);
-
-        let transaction = ClientTransaction {
-            transaction_type: TransactionType::Deposit,
-            transaction_id: 1,
-            amount: Some(100.0),
-        };
-        account.process_transaction(transaction).unwrap();
+        let initial_tranaction = ClientTransaction::new_deposit_transaction(1, 100.0);
+        account.procecss_deposit(initial_tranaction).unwrap();
+        assert_eq!(account.transactions.len(), 1);
+        assert_eq!(account.disputes.len(), 0);
         assert_eq!(account.balance.available, 100.0);
         assert_eq!(account.balance.held, 0.0);
         assert_eq!(account.balance.total(), 100.0);
-        assert_eq!(account.real_transactions.len(), 1);
 
-        let transaction_2 = ClientTransaction {
-            transaction_type: TransactionType::Withdrawal,
-            transaction_id: 2,
-            amount: Some(25.0),
-        };
-        account.process_transaction(transaction_2).unwrap();
-        assert_eq!(account.balance.available, 75.0);
-        assert_eq!(account.balance.held, 0.0);
-        assert_eq!(account.balance.total(), 75.0);
-        assert_eq!(account.real_transactions.len(), 2);
-    }
-
-    #[test]
-    fn test_process_transaction_dispute_and_resolve() {
-        let mut account = ClientAccount::new(1);
-
-        let transaction = ClientTransaction {
-            transaction_type: TransactionType::Deposit,
-            transaction_id: 1,
-            amount: Some(100.0),
-        };
-        account.process_transaction(transaction).unwrap();
-        assert_eq!(account.balance.available, 100.0);
-        assert_eq!(account.balance.held, 0.0);
-        assert_eq!(account.balance.total(), 100.0);
-        assert_eq!(account.real_transactions.len(), 1);
-
-        let transaction_2 = ClientTransaction {
-            transaction_type: TransactionType::Deposit,
-            transaction_id: 2,
-            amount: Some(10.0),
-        };
-        account.process_transaction(transaction_2).unwrap();
+        let transaction_to_dispute = ClientTransaction::new_deposit_transaction(2, 10.0);
+        account.procecss_deposit(transaction_to_dispute).unwrap();
+        assert_eq!(account.transactions.len(), 2);
+        assert_eq!(account.disputes.len(), 0);
         assert_eq!(account.balance.available, 110.0);
         assert_eq!(account.balance.held, 0.0);
         assert_eq!(account.balance.total(), 110.0);
-        assert_eq!(account.real_transactions.len(), 2);
 
-        let transaction_3 = ClientTransaction {
-            transaction_type: TransactionType::Dispute,
-            transaction_id: 2,
-            amount: None,
-        };
-        account.process_transaction(transaction_3).unwrap();
+        let dispute_transaction = ClientTransaction::new_dispute_transaction(2);
+        account.procecss_dispute(dispute_transaction).unwrap();
+
+        assert_eq!(account.transactions.len(), 3);
+        assert_eq!(account.disputes.len(), 1);
         assert_eq!(account.balance.available, 100.0);
         assert_eq!(account.balance.held, 10.0);
         assert_eq!(account.balance.total(), 110.0);
-        assert_eq!(account.real_transactions.len(), 2);
     }
+
+    // #[test]
+    // fn test_process_transaction_deposit_withdrawal() {
+    //     let mut account = ClientAccount::new(1);
+
+    //     let transaction = ClientTransaction {
+    //         transaction_type: TransactionType::Deposit,
+    //         transaction_id: 1,
+    //         amount: Some(100.0),
+    //     };
+    //     account.process_transaction(transaction).unwrap();
+    //     assert_eq!(account.balance.available, 100.0);
+    //     assert_eq!(account.balance.held, 0.0);
+    //     assert_eq!(account.balance.total(), 100.0);
+    //     assert_eq!(account.real_transactions.len(), 1);
+
+    //     let transaction_2 = ClientTransaction {
+    //         transaction_type: TransactionType::Withdrawal,
+    //         transaction_id: 2,
+    //         amount: Some(25.0),
+    //     };
+    //     account.process_transaction(transaction_2).unwrap();
+    //     assert_eq!(account.balance.available, 75.0);
+    //     assert_eq!(account.balance.held, 0.0);
+    //     assert_eq!(account.balance.total(), 75.0);
+    //     assert_eq!(account.real_transactions.len(), 2);
+    // }
+
+    // #[test]
+    // fn test_process_transaction_dispute_and_resolve() {
+    //     let mut account = ClientAccount::new(1);
+
+    //     let transaction = ClientTransaction {
+    //         transaction_type: TransactionType::Deposit,
+    //         transaction_id: 1,
+    //         amount: Some(100.0),
+    //     };
+    //     account.process_transaction(transaction).unwrap();
+    //     assert_eq!(account.balance.available, 100.0);
+    //     assert_eq!(account.balance.held, 0.0);
+    //     assert_eq!(account.balance.total(), 100.0);
+    //     assert_eq!(account.real_transactions.len(), 1);
+
+    //     let transaction_2 = ClientTransaction {
+    //         transaction_type: TransactionType::Deposit,
+    //         transaction_id: 2,
+    //         amount: Some(10.0),
+    //     };
+    //     account.process_transaction(transaction_2).unwrap();
+    //     assert_eq!(account.balance.available, 110.0);
+    //     assert_eq!(account.balance.held, 0.0);
+    //     assert_eq!(account.balance.total(), 110.0);
+    //     assert_eq!(account.real_transactions.len(), 2);
+
+    //     let transaction_3 = ClientTransaction {
+    //         transaction_type: TransactionType::Dispute,
+    //         transaction_id: 2,
+    //         amount: None,
+    //     };
+    //     account.process_transaction(transaction_3).unwrap();
+    //     assert_eq!(account.balance.available, 100.0);
+    //     assert_eq!(account.balance.held, 10.0);
+    //     assert_eq!(account.balance.total(), 110.0);
+    //     assert_eq!(account.real_transactions.len(), 2);
+    // }
 }
