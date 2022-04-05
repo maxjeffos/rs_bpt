@@ -4,11 +4,8 @@ use std::io;
 use serde_derive::Deserialize;
 
 pub mod client_account;
-use client_account::{
-    ClientAccount, ClientTransaction, TransactionProcessingError,
-};
+use client_account::{error::TransactionProcessingError, ClientAccount};
 pub mod ser_form;
-
 
 pub type ClientId = u16;
 pub type TransactionId = u32;
@@ -31,27 +28,22 @@ pub enum TransactionType {
     Chargeback,
 }
 
-
 fn process_transaction(
     accounts: &mut HashMap<ClientId, ClientAccount>,
     transaction: ser_form::Transaction,
 ) -> Result<(), TransactionProcessingError> {
-    println!("{:?}", transaction);
-
     let client_account = accounts
         .entry(transaction.client_id)
-        .or_insert(ClientAccount::new(transaction.client_id));
+        .or_insert_with(|| ClientAccount::new(transaction.client_id));
 
-    client_account.process_transaction(ClientTransaction {
-        transaction_type: transaction.transaction_type,
-        transaction_id: transaction.transaction_id,
-        amount: transaction.amount,
-    })?;
+    client_account.process_transaction(transaction)?;
 
     Ok(())
 }
 
-pub fn process_transactions_file(input_transactions_file: String) -> Result<(), Box<dyn std::error::Error>> {
+pub fn process_transactions_file(
+    input_transactions_file: String,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut accounts = HashMap::<ClientId, ClientAccount>::new();
     let mut reader = csv::Reader::from_path(input_transactions_file)?;
 
