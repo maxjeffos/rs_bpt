@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{ser_form, ClientId, TransactionId, TransactionType};
+use crate::{ClientId, TransactionId, TransactionType};
 
 mod disputable_transaction;
 use disputable_transaction::DisputableTransaction;
@@ -10,18 +10,29 @@ use dispute_related_transaction::DisputeRelatedTransaction;
 
 pub mod error;
 use error::TransactionProcessingError;
+
+pub mod client_account_transaction;
+use client_account_transaction::ClientAccountTransaction;
+
+pub mod account_balance;
+use account_balance::AccountBalance;
+
+pub enum NonIgnoredErrors {
+    ReferencedTransactionNotFound,
+}
+
 #[derive(Debug)]
 pub struct ClientAccount {
-    pub client: ClientId,
+    pub client_id: ClientId,
     disputable_transactions: HashMap<TransactionId, DisputableTransaction>,
     pub balance: AccountBalance,
     pub locked: bool,
 }
 
 impl ClientAccount {
-    pub fn new(client: ClientId) -> Self {
+    pub fn new(client_id: ClientId) -> Self {
         Self {
-            client,
+            client_id,
             disputable_transactions: HashMap::new(),
             balance: AccountBalance::new(),
             locked: false,
@@ -115,9 +126,21 @@ impl ClientAccount {
         }
     }
 
-    pub fn process_transaction(
+    fn log_error(
+        &self,
+        debug_logger: &mut Option<impl std::io::Write>,
+        _transaction: &ClientAccountTransaction,
+        _error: TransactionProcessingError,
+    ) {
+        if let Some(ref mut logger) = debug_logger {
+            writeln!(logger, "test error message").unwrap();
+        }
+    }
+
+    pub fn process_client_transaction(
         &mut self,
-        transaction: ser_form::Transaction,
+        transaction: ClientAccountTransaction,
+        debug_logger: &mut Option<impl std::io::Write>,
     ) -> Result<(), TransactionProcessingError> {
         match transaction.transaction_type {
             TransactionType::Deposit => {
@@ -127,7 +150,10 @@ impl ClientAccount {
                         .amount
                         .expect("amount is required for a deposit"),
                 );
-                self.process_disputable_transaction(deposit_transaction)?;
+                let res = self.process_disputable_transaction(deposit_transaction);
+                if let Err(inner_error) = res {
+                    self.log_error(debug_logger, &transaction, inner_error);
+                }
             }
             TransactionType::Withdrawal => {
                 let deposit_transaction = DisputableTransaction::new_withdrawal_transaction(
@@ -136,23 +162,35 @@ impl ClientAccount {
                         .amount
                         .expect("amount is required for a deposit"),
                 );
-                self.process_disputable_transaction(deposit_transaction)?;
+                let res = self.process_disputable_transaction(deposit_transaction);
+                if let Err(inner_error) = res {
+                    self.log_error(debug_logger, &transaction, inner_error);
+                }
             }
             TransactionType::Dispute => {
                 let dispute_transaction =
                     DisputeRelatedTransaction::new_dispute_transaction(transaction.transaction_id);
-                self.process_dispute(dispute_transaction)?;
+                let res = self.process_dispute(dispute_transaction);
+                if let Err(inner_error) = res {
+                    self.log_error(debug_logger, &transaction, inner_error);
+                }
             }
             TransactionType::Resolve => {
                 let resolve_transaction =
                     DisputeRelatedTransaction::new_resolve_transaction(transaction.transaction_id);
-                self.process_resolve(resolve_transaction)?;
+                let res = self.process_resolve(resolve_transaction);
+                if let Err(inner_error) = res {
+                    self.log_error(debug_logger, &transaction, inner_error);
+                }
             }
             TransactionType::Chargeback => {
                 let resolve_transaction = DisputeRelatedTransaction::new_chargeback_transaction(
                     transaction.transaction_id,
                 );
-                self.process_chargeback(resolve_transaction)?;
+                let res = self.process_chargeback(resolve_transaction);
+                if let Err(inner_error) = res {
+                    self.log_error(debug_logger, &transaction, inner_error);
+                }
             }
         }
 
@@ -160,31 +198,136 @@ impl ClientAccount {
     }
 }
 
-#[derive(Debug)]
-pub struct AccountBalance {
-    pub available: f64,
-    pub held: f64,
-}
-
-impl AccountBalance {
-    fn new() -> AccountBalance {
-        AccountBalance {
-            available: 0.0,
-            held: 0.0,
-        }
-    }
-
-    pub fn total(&self) -> f64 {
-        self.available + self.held
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[cfg(test)]
+    mod process_disputable_transaction {
+        use super::*;
+
+        #[test]
+        fn it_returns_error_transaction_id_already_exists() {
+            let mut account = ClientAccount::new(1);
+
+            account
+                .process_disputable_transaction(DisputableTransaction::new_deposit_transaction(
+                    1, 100.0,
+                ))
+                .unwrap();
+
+            assert_eq!(
+                account.process_disputable_transaction(
+                    DisputableTransaction::new_deposit_transaction(1, 200.0),
+                ),
+                Err(TransactionProcessingError::TransactionIDAlreadyExists),
+            );
+        }
+
+        #[test]
+        fn works_for_deposit() {
+            let mut account = ClientAccount::new(1);
+
+            account
+                .process_disputable_transaction(DisputableTransaction::new_deposit_transaction(
+                    1, 100.0,
+                ))
+                .unwrap();
+
+            assert_eq!(account.disputable_transactions.len(), 1);
+            assert_eq!(account.balance.available, 100.0);
+            assert_eq!(account.balance.held, 0.0);
+            assert_eq!(account.balance.total(), 100.0);
+            assert_eq!(account.locked, false);
+        }
+
+        #[test]
+        fn works_for_withdrawal() {
+            let mut account = ClientAccount::new(1);
+
+            account
+                .process_disputable_transaction(DisputableTransaction::new_withdrawal_transaction(
+                    1, 100.0,
+                ))
+                .unwrap();
+
+            assert_eq!(account.disputable_transactions.len(), 1);
+            assert_eq!(account.balance.available, -100.0);
+            assert_eq!(account.balance.held, 0.0);
+            assert_eq!(account.balance.total(), -100.0);
+            assert_eq!(account.locked, false);
+        }
+    }
+
+    // edge cases for various process_xyz scenarios
+
     #[test]
-    fn test_process_deposit() {
+    fn test_process_dispute_resolve_or_chargeback_with_no_matching_transaction_id_returns_error() {
+        let mut account = ClientAccount::new(1);
+
+        assert_eq!(
+            account.process_dispute(DisputeRelatedTransaction::new_dispute_transaction(1)),
+            Err(TransactionProcessingError::ReferencedTransactionNotFound)
+        );
+
+        assert_eq!(
+            account.process_resolve(DisputeRelatedTransaction::new_resolve_transaction(1)),
+            Err(TransactionProcessingError::ReferencedTransactionNotFound)
+        );
+
+        assert_eq!(
+            account.process_chargeback(DisputeRelatedTransaction::new_chargeback_transaction(1)),
+            Err(TransactionProcessingError::ReferencedTransactionNotFound)
+        );
+    }
+
+    #[test]
+    fn test_process_resolve_returns_error_if_referenced_tx_is_already_under_dispute() {
+        let mut account = ClientAccount::new(1);
+
+        let initial_tranaction = DisputableTransaction::new_deposit_transaction(1, 100.0);
+        account
+            .process_disputable_transaction(initial_tranaction)
+            .unwrap();
+        assert_eq!(account.disputable_transactions.len(), 1);
+        assert_eq!(account.balance.available, 100.0);
+        assert_eq!(account.balance.held, 0.0);
+        assert_eq!(account.balance.total(), 100.0);
+        assert_eq!(account.locked, false);
+
+        let transaction_to_dispute = DisputableTransaction::new_deposit_transaction(2, 10.0);
+        account
+            .process_disputable_transaction(transaction_to_dispute)
+            .unwrap();
+        assert_eq!(account.disputable_transactions.len(), 2);
+        assert_eq!(account.balance.available, 110.0);
+        assert_eq!(account.balance.held, 0.0);
+        assert_eq!(account.balance.total(), 110.0);
+        assert_eq!(account.locked, false);
+
+        let dispute_transaction = DisputeRelatedTransaction::new_dispute_transaction(2);
+        account.process_dispute(dispute_transaction).unwrap();
+
+        assert_eq!(account.disputable_transactions.len(), 2);
+        assert_eq!(account.balance.available, 100.0);
+        assert_eq!(account.balance.held, 10.0);
+        assert_eq!(account.balance.total(), 110.0);
+        assert_eq!(account.locked, false);
+
+        let dispute_it_again_transaction = DisputeRelatedTransaction::new_dispute_transaction(2);
+        let res = account.process_dispute(dispute_it_again_transaction);
+        if let Err(the_error) = res {
+            assert_eq!(
+                the_error,
+                TransactionProcessingError::TransactionAlreadyHasPendingDisupte
+            );
+        } else {
+            panic!("Should have returned an error");
+        }
+    }
+
+    #[test]
+    fn test_process_resolve_returns_error_if_referenced_tx_is_not_under_dispute() {
         let mut account = ClientAccount::new(1);
 
         account
@@ -192,7 +335,23 @@ mod tests {
                 1, 100.0,
             ))
             .unwrap();
+        assert_eq!(account.disputable_transactions.len(), 1);
+        assert_eq!(account.balance.available, 100.0);
+        assert_eq!(account.balance.held, 0.0);
+        assert_eq!(account.balance.total(), 100.0);
+        assert_eq!(account.locked, false);
 
+        let res = account.process_resolve(DisputeRelatedTransaction::new_resolve_transaction(1));
+        if let Err(the_error) = res {
+            assert_eq!(
+                the_error,
+                TransactionProcessingError::TransactionDoesNotHavePendingDisupte
+            );
+        } else {
+            panic!("Should have returned an error");
+        }
+
+        // account balance is unaffected
         assert_eq!(account.disputable_transactions.len(), 1);
         assert_eq!(account.balance.available, 100.0);
         assert_eq!(account.balance.held, 0.0);
@@ -201,24 +360,70 @@ mod tests {
     }
 
     #[test]
-    fn test_process_withdrawal() {
+    fn test_process_chargeback_returns_error_if_referenced_tx_is_not_under_dispute() {
         let mut account = ClientAccount::new(1);
 
         account
-            .process_disputable_transaction(DisputableTransaction::new_withdrawal_transaction(
+            .process_disputable_transaction(DisputableTransaction::new_deposit_transaction(
                 1, 100.0,
             ))
             .unwrap();
-
         assert_eq!(account.disputable_transactions.len(), 1);
-        assert_eq!(account.balance.available, -100.0);
+        assert_eq!(account.balance.available, 100.0);
         assert_eq!(account.balance.held, 0.0);
-        assert_eq!(account.balance.total(), -100.0);
+        assert_eq!(account.balance.total(), 100.0);
+        assert_eq!(account.locked, false);
+
+        let res =
+            account.process_chargeback(DisputeRelatedTransaction::new_chargeback_transaction(1));
+        if let Err(the_error) = res {
+            assert_eq!(
+                the_error,
+                TransactionProcessingError::TransactionDoesNotHavePendingDisupte
+            );
+        } else {
+            panic!("Should have returned an error");
+        }
+
+        // account balance is unaffected
+        assert_eq!(account.disputable_transactions.len(), 1);
+        assert_eq!(account.balance.available, 100.0);
+        assert_eq!(account.balance.held, 0.0);
+        assert_eq!(account.balance.total(), 100.0);
+        assert_eq!(account.locked, false);
+    }
+
+    // flows. maybe these should use process_client_transaction instead?
+
+    #[test]
+    fn test_process_transaction_deposit_withdrawal() {
+        let mut account = ClientAccount::new(1);
+
+        account
+            .process_disputable_transaction(DisputableTransaction::new_deposit_transaction(
+                1, 100.0,
+            ))
+            .unwrap();
+        assert_eq!(account.disputable_transactions.len(), 1);
+        assert_eq!(account.balance.available, 100.0);
+        assert_eq!(account.balance.held, 0.0);
+        assert_eq!(account.balance.total(), 100.0);
+        assert_eq!(account.locked, false);
+
+        account
+            .process_disputable_transaction(DisputableTransaction::new_withdrawal_transaction(
+                2, 25.0,
+            ))
+            .unwrap();
+        assert_eq!(account.disputable_transactions.len(), 2);
+        assert_eq!(account.balance.available, 75.0);
+        assert_eq!(account.balance.held, 0.0);
+        assert_eq!(account.balance.total(), 75.0);
         assert_eq!(account.locked, false);
     }
 
     #[test]
-    fn test_process_dispute_and_resolve() {
+    fn test_deposit_dispute_and_resolve() {
         let mut account = ClientAccount::new(1);
 
         let initial_tranaction = DisputableTransaction::new_deposit_transaction(1, 100.0);
@@ -367,183 +572,200 @@ mod tests {
         assert_eq!(referenced_transaction.is_under_dispute, false);
     }
 
-    #[test]
-    fn test_process_disputable_transaction_returns_error_if_duplicate_tx_id() {
-        let mut account = ClientAccount::new(1);
-        account
-            .process_disputable_transaction(DisputableTransaction::new_deposit_transaction(
-                1, 100.0,
-            ))
-            .unwrap();
-        let res = account.process_disputable_transaction(
-            DisputableTransaction::new_deposit_transaction(1, 200.0),
-        );
-        if let Err(the_error) = res {
-            assert_eq!(
-                the_error,
-                TransactionProcessingError::TransactionIDAlreadyExists
-            );
-        } else {
-            panic!("Should have returned an error");
-        }
-    }
+    #[cfg(test)]
+    mod process_client_transaction {
+        use super::*;
 
-    #[test]
-    fn test_process_dispute_resolve_or_chargeback_with_no_matching_transaction_id_returns_error() {
-        let mut account = ClientAccount::new(1);
-
-        assert_eq!(
-            account.process_dispute(DisputeRelatedTransaction::new_dispute_transaction(1)),
-            Err(TransactionProcessingError::ReferencedTransactionNotFound)
-        );
-
-        assert_eq!(
-            account.process_resolve(DisputeRelatedTransaction::new_resolve_transaction(1)),
-            Err(TransactionProcessingError::ReferencedTransactionNotFound)
-        );
-
-        assert_eq!(
-            account.process_chargeback(DisputeRelatedTransaction::new_chargeback_transaction(1)),
-            Err(TransactionProcessingError::ReferencedTransactionNotFound)
-        );
-    }
-
-    #[test]
-    fn test_process_resolve_returns_error_if_referenced_tx_is_already_under_dispute() {
-        let mut account = ClientAccount::new(1);
-
-        let initial_tranaction = DisputableTransaction::new_deposit_transaction(1, 100.0);
-        account
-            .process_disputable_transaction(initial_tranaction)
-            .unwrap();
-        assert_eq!(account.disputable_transactions.len(), 1);
-        assert_eq!(account.balance.available, 100.0);
-        assert_eq!(account.balance.held, 0.0);
-        assert_eq!(account.balance.total(), 100.0);
-        assert_eq!(account.locked, false);
-
-        let transaction_to_dispute = DisputableTransaction::new_deposit_transaction(2, 10.0);
-        account
-            .process_disputable_transaction(transaction_to_dispute)
-            .unwrap();
-        assert_eq!(account.disputable_transactions.len(), 2);
-        assert_eq!(account.balance.available, 110.0);
-        assert_eq!(account.balance.held, 0.0);
-        assert_eq!(account.balance.total(), 110.0);
-        assert_eq!(account.locked, false);
-
-        let dispute_transaction = DisputeRelatedTransaction::new_dispute_transaction(2);
-        account.process_dispute(dispute_transaction).unwrap();
-
-        assert_eq!(account.disputable_transactions.len(), 2);
-        assert_eq!(account.balance.available, 100.0);
-        assert_eq!(account.balance.held, 10.0);
-        assert_eq!(account.balance.total(), 110.0);
-        assert_eq!(account.locked, false);
-
-        let dispute_it_again_transaction = DisputeRelatedTransaction::new_dispute_transaction(2);
-        let res = account.process_dispute(dispute_it_again_transaction);
-        if let Err(the_error) = res {
-            assert_eq!(
-                the_error,
-                TransactionProcessingError::TransactionAlreadyHasPendingDisupte
-            );
-        } else {
-            panic!("Should have returned an error");
-        }
-    }
-
-    #[test]
-    fn test_process_resolve_returns_error_if_referenced_tx_is_not_under_dispute() {
-        let mut account = ClientAccount::new(1);
-
-        account
-            .process_disputable_transaction(DisputableTransaction::new_deposit_transaction(
-                1, 100.0,
-            ))
-            .unwrap();
-        assert_eq!(account.disputable_transactions.len(), 1);
-        assert_eq!(account.balance.available, 100.0);
-        assert_eq!(account.balance.held, 0.0);
-        assert_eq!(account.balance.total(), 100.0);
-        assert_eq!(account.locked, false);
-
-        let res = account.process_resolve(DisputeRelatedTransaction::new_resolve_transaction(1));
-        if let Err(the_error) = res {
-            assert_eq!(
-                the_error,
-                TransactionProcessingError::TransactionDoesNotHavePendingDisupte
-            );
-        } else {
-            panic!("Should have returned an error");
+        fn get_none_logger_for_test() -> Option<std::io::Stderr> {
+            None
         }
 
-        // account balance is unaffected
-        assert_eq!(account.disputable_transactions.len(), 1);
-        assert_eq!(account.balance.available, 100.0);
-        assert_eq!(account.balance.held, 0.0);
-        assert_eq!(account.balance.total(), 100.0);
-        assert_eq!(account.locked, false);
-    }
+        #[test]
+        fn it_should_ignore_errors_generated_from_process_disputable_transaction_when_transaction_id_already_exists(
+        ) {
+            let mut account = ClientAccount::new(1);
 
-    #[test]
-    fn test_process_chargeback_returns_error_if_referenced_tx_is_not_under_dispute() {
-        let mut account = ClientAccount::new(1);
+            account
+                .process_client_transaction(
+                    ClientAccountTransaction {
+                        transaction_type: TransactionType::Deposit,
+                        transaction_id: 1,
+                        amount: Some(100.0),
+                    },
+                    &mut get_none_logger_for_test(),
+                )
+                .unwrap();
+            assert_eq!(account.balance.available, 100.0);
+            assert_eq!(account.balance.held, 0.0);
+            assert_eq!(account.balance.total(), 100.0);
+            assert_eq!(account.locked, false);
 
-        account
-            .process_disputable_transaction(DisputableTransaction::new_deposit_transaction(
-                1, 100.0,
-            ))
-            .unwrap();
-        assert_eq!(account.disputable_transactions.len(), 1);
-        assert_eq!(account.balance.available, 100.0);
-        assert_eq!(account.balance.held, 0.0);
-        assert_eq!(account.balance.total(), 100.0);
-        assert_eq!(account.locked, false);
-
-        let res =
-            account.process_chargeback(DisputeRelatedTransaction::new_chargeback_transaction(1));
-        if let Err(the_error) = res {
             assert_eq!(
-                the_error,
-                TransactionProcessingError::TransactionDoesNotHavePendingDisupte
+                account.process_client_transaction(
+                    ClientAccountTransaction {
+                        transaction_type: TransactionType::Deposit,
+                        transaction_id: 1,
+                        amount: Some(200.0),
+                    },
+                    &mut get_none_logger_for_test(),
+                ),
+                Ok(()),
             );
-        } else {
-            panic!("Should have returned an error");
+            assert_eq!(account.balance.available, 100.0);
+            assert_eq!(account.balance.held, 0.0);
+            assert_eq!(account.balance.total(), 100.0);
+            assert_eq!(account.locked, false);
+
+            assert_eq!(
+                account.process_client_transaction(
+                    ClientAccountTransaction {
+                        transaction_type: TransactionType::Withdrawal,
+                        transaction_id: 1,
+                        amount: Some(50.0),
+                    },
+                    &mut get_none_logger_for_test()
+                ),
+                Ok(()),
+            );
+            assert_eq!(account.balance.available, 100.0);
+            assert_eq!(account.balance.held, 0.0);
+            assert_eq!(account.balance.total(), 100.0);
+            assert_eq!(account.locked, false);
         }
 
-        // account balance is unaffected
-        assert_eq!(account.disputable_transactions.len(), 1);
-        assert_eq!(account.balance.available, 100.0);
-        assert_eq!(account.balance.held, 0.0);
-        assert_eq!(account.balance.total(), 100.0);
-        assert_eq!(account.locked, false);
-    }
+        #[test]
+        fn it_should_ignore_deposit_and_withdrawal_transactions_with_no_amount() {}
 
-    #[test]
-    fn test_process_transaction_deposit_withdrawal() {
-        let mut account = ClientAccount::new(1);
+        // This test makes sure that errors generated from the process_dispute, process_resolve, and process_chargeback
+        // are ignored. Why not just not have them return an error and ignore the conditions that generate the error?
+        // Because this way, we can better test that the process_xyz functions are working properly and because
+        // it gives the option of (maybe in the future) logging those errors in some way.
+        #[test]
+        fn it_should_handle_errors_when_dispute_resolve_or_chargeback_transactions_refer_to_a_non_existing_transaction(
+        ) {
+            let mut account = ClientAccount::new(1);
 
-        account
-            .process_disputable_transaction(DisputableTransaction::new_deposit_transaction(
-                1, 100.0,
-            ))
-            .unwrap();
-        assert_eq!(account.disputable_transactions.len(), 1);
-        assert_eq!(account.balance.available, 100.0);
-        assert_eq!(account.balance.held, 0.0);
-        assert_eq!(account.balance.total(), 100.0);
-        assert_eq!(account.locked, false);
+            assert_eq!(
+                account.process_client_transaction(
+                    ClientAccountTransaction {
+                        transaction_type: TransactionType::Dispute,
+                        transaction_id: 1,
+                        amount: None,
+                    },
+                    &mut get_none_logger_for_test(),
+                ),
+                Ok(()),
+            );
 
-        account
-            .process_disputable_transaction(DisputableTransaction::new_withdrawal_transaction(
-                2, 25.0,
-            ))
-            .unwrap();
-        assert_eq!(account.disputable_transactions.len(), 2);
-        assert_eq!(account.balance.available, 75.0);
-        assert_eq!(account.balance.held, 0.0);
-        assert_eq!(account.balance.total(), 75.0);
-        assert_eq!(account.locked, false);
+            assert_eq!(
+                account.process_client_transaction(
+                    ClientAccountTransaction {
+                        transaction_type: TransactionType::Resolve,
+                        transaction_id: 1,
+                        amount: None,
+                    },
+                    &mut get_none_logger_for_test(),
+                ),
+                Ok(()),
+            );
+
+            assert_eq!(
+                account.process_client_transaction(
+                    ClientAccountTransaction {
+                        transaction_type: TransactionType::Chargeback,
+                        transaction_id: 1,
+                        amount: None,
+                    },
+                    &mut get_none_logger_for_test()
+                ),
+                Ok(()),
+            );
+        }
+
+        // this test is similar to the one with the same name above, but exercises process_client_transaction
+        // for each step.
+        #[test]
+        fn test_deposit_dispute_and_resolve() {
+            let mut account = ClientAccount::new(1);
+
+            let debug_logger_collector = Vec::<u8>::new();
+            let debug_logger = &mut Some(debug_logger_collector);
+
+            let deposit = ClientAccountTransaction {
+                transaction_type: TransactionType::Deposit,
+                transaction_id: 1,
+                amount: Some(100.0),
+            };
+            account
+                .process_client_transaction(deposit, debug_logger)
+                .unwrap();
+            assert_eq!(account.disputable_transactions.len(), 1);
+            assert_eq!(account.balance.available, 100.0);
+            assert_eq!(account.balance.held, 0.0);
+            assert_eq!(account.balance.total(), 100.0);
+            assert_eq!(account.locked, false);
+            if let Some(log_collector) = debug_logger {
+                assert_eq!(log_collector.len(), 0);
+            }
+
+            let transaction_to_dispute = ClientAccountTransaction {
+                transaction_type: TransactionType::Deposit,
+                transaction_id: 2,
+                amount: Some(10.0),
+            };
+            account
+                .process_client_transaction(transaction_to_dispute, debug_logger)
+                .unwrap();
+            assert_eq!(account.disputable_transactions.len(), 2);
+            assert_eq!(account.balance.available, 110.0);
+            assert_eq!(account.balance.held, 0.0);
+            assert_eq!(account.balance.total(), 110.0);
+            assert_eq!(account.locked, false);
+            if let Some(log_collector) = debug_logger {
+                assert_eq!(log_collector.len(), 0);
+            }
+
+            let dispute = ClientAccountTransaction {
+                transaction_type: TransactionType::Dispute,
+                transaction_id: 2,
+                amount: None,
+            };
+            account
+                .process_client_transaction(dispute, debug_logger)
+                .unwrap();
+            assert_eq!(account.disputable_transactions.len(), 2);
+            assert_eq!(account.balance.available, 100.0);
+            assert_eq!(account.balance.held, 10.0);
+            assert_eq!(account.balance.total(), 110.0);
+            assert_eq!(account.locked, false);
+            if let Some(log_collector) = debug_logger {
+                assert_eq!(log_collector.len(), 0);
+            }
+
+            // get the referenced transaction and make sure it's under dispute
+            let referenced_transaction = account.disputable_transactions.get(&2).unwrap();
+            assert_eq!(referenced_transaction.is_under_dispute, true);
+
+            // now resolve
+            let resolve = ClientAccountTransaction {
+                transaction_type: TransactionType::Resolve,
+                transaction_id: 2,
+                amount: None,
+            };
+            account
+                .process_client_transaction(resolve, debug_logger)
+                .unwrap();
+
+            assert_eq!(account.disputable_transactions.len(), 2);
+            assert_eq!(account.balance.available, 110.0);
+            assert_eq!(account.balance.held, 0.0);
+            assert_eq!(account.balance.total(), 110.0);
+            assert_eq!(account.locked, false);
+            let referenced_transaction = account.disputable_transactions.get(&2).unwrap();
+            assert_eq!(referenced_transaction.is_under_dispute, false);
+            if let Some(log_collector) = debug_logger {
+                assert_eq!(log_collector.len(), 0);
+            }
+        }
     }
 }
