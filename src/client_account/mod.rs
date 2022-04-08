@@ -128,19 +128,17 @@ impl ClientAccount {
 
     fn log_error(
         &self,
-        debug_logger: &mut Option<impl std::io::Write>,
+        debug_logger: &mut dyn std::io::Write,
         _transaction: &ClientAccountTransaction,
         _error: TransactionProcessingError,
     ) {
-        if let Some(ref mut logger) = debug_logger {
-            writeln!(logger, "test error message").unwrap();
-        }
+        writeln!(debug_logger, "test error message").unwrap();
     }
 
     pub fn process_client_transaction(
         &mut self,
         transaction: ClientAccountTransaction,
-        debug_logger: &mut Option<impl std::io::Write>,
+        debug_logger: &mut dyn std::io::Write,
     ) -> Result<(), TransactionProcessingError> {
         match transaction.transaction_type {
             TransactionType::Deposit => {
@@ -576,10 +574,6 @@ mod tests {
     mod process_client_transaction {
         use super::*;
 
-        fn get_none_logger_for_test() -> Option<std::io::Stderr> {
-            None
-        }
-
         #[test]
         fn it_should_ignore_errors_generated_from_process_disputable_transaction_when_transaction_id_already_exists(
         ) {
@@ -592,7 +586,7 @@ mod tests {
                         transaction_id: 1,
                         amount: Some(100.0),
                     },
-                    &mut get_none_logger_for_test(),
+                    &mut std::io::sink(),
                 )
                 .unwrap();
             assert_eq!(account.balance.available, 100.0);
@@ -607,7 +601,7 @@ mod tests {
                         transaction_id: 1,
                         amount: Some(200.0),
                     },
-                    &mut get_none_logger_for_test(),
+                    &mut std::io::sink(),
                 ),
                 Ok(()),
             );
@@ -623,7 +617,7 @@ mod tests {
                         transaction_id: 1,
                         amount: Some(50.0),
                     },
-                    &mut get_none_logger_for_test()
+                    &mut std::io::sink(),
                 ),
                 Ok(()),
             );
@@ -652,7 +646,7 @@ mod tests {
                         transaction_id: 1,
                         amount: None,
                     },
-                    &mut get_none_logger_for_test(),
+                    &mut std::io::sink(),
                 ),
                 Ok(()),
             );
@@ -664,7 +658,7 @@ mod tests {
                         transaction_id: 1,
                         amount: None,
                     },
-                    &mut get_none_logger_for_test(),
+                    &mut std::io::sink(),
                 ),
                 Ok(()),
             );
@@ -676,7 +670,7 @@ mod tests {
                         transaction_id: 1,
                         amount: None,
                     },
-                    &mut get_none_logger_for_test()
+                    &mut std::io::sink(),
                 ),
                 Ok(()),
             );
@@ -687,9 +681,7 @@ mod tests {
         #[test]
         fn test_deposit_dispute_and_resolve() {
             let mut account = ClientAccount::new(1);
-
-            let debug_logger_collector = Vec::<u8>::new();
-            let debug_logger = &mut Some(debug_logger_collector);
+            let mut debug_logger = Vec::<u8>::new();
 
             let deposit = ClientAccountTransaction {
                 transaction_type: TransactionType::Deposit,
@@ -697,16 +689,14 @@ mod tests {
                 amount: Some(100.0),
             };
             account
-                .process_client_transaction(deposit, debug_logger)
+                .process_client_transaction(deposit, &mut debug_logger)
                 .unwrap();
             assert_eq!(account.disputable_transactions.len(), 1);
             assert_eq!(account.balance.available, 100.0);
             assert_eq!(account.balance.held, 0.0);
             assert_eq!(account.balance.total(), 100.0);
             assert_eq!(account.locked, false);
-            if let Some(log_collector) = debug_logger {
-                assert_eq!(log_collector.len(), 0);
-            }
+            assert_eq!(debug_logger.len(), 0);
 
             let transaction_to_dispute = ClientAccountTransaction {
                 transaction_type: TransactionType::Deposit,
@@ -714,16 +704,14 @@ mod tests {
                 amount: Some(10.0),
             };
             account
-                .process_client_transaction(transaction_to_dispute, debug_logger)
+                .process_client_transaction(transaction_to_dispute, &mut debug_logger)
                 .unwrap();
             assert_eq!(account.disputable_transactions.len(), 2);
             assert_eq!(account.balance.available, 110.0);
             assert_eq!(account.balance.held, 0.0);
             assert_eq!(account.balance.total(), 110.0);
             assert_eq!(account.locked, false);
-            if let Some(log_collector) = debug_logger {
-                assert_eq!(log_collector.len(), 0);
-            }
+            assert_eq!(debug_logger.len(), 0);
 
             let dispute = ClientAccountTransaction {
                 transaction_type: TransactionType::Dispute,
@@ -731,16 +719,14 @@ mod tests {
                 amount: None,
             };
             account
-                .process_client_transaction(dispute, debug_logger)
+                .process_client_transaction(dispute, &mut debug_logger)
                 .unwrap();
             assert_eq!(account.disputable_transactions.len(), 2);
             assert_eq!(account.balance.available, 100.0);
             assert_eq!(account.balance.held, 10.0);
             assert_eq!(account.balance.total(), 110.0);
             assert_eq!(account.locked, false);
-            if let Some(log_collector) = debug_logger {
-                assert_eq!(log_collector.len(), 0);
-            }
+            assert_eq!(debug_logger.len(), 0);
 
             // get the referenced transaction and make sure it's under dispute
             let referenced_transaction = account.disputable_transactions.get(&2).unwrap();
@@ -753,7 +739,7 @@ mod tests {
                 amount: None,
             };
             account
-                .process_client_transaction(resolve, debug_logger)
+                .process_client_transaction(resolve, &mut debug_logger)
                 .unwrap();
 
             assert_eq!(account.disputable_transactions.len(), 2);
@@ -763,9 +749,7 @@ mod tests {
             assert_eq!(account.locked, false);
             let referenced_transaction = account.disputable_transactions.get(&2).unwrap();
             assert_eq!(referenced_transaction.is_under_dispute, false);
-            if let Some(log_collector) = debug_logger {
-                assert_eq!(log_collector.len(), 0);
-            }
+            assert_eq!(debug_logger.len(), 0);
         }
     }
 }
