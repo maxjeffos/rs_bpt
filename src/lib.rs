@@ -34,7 +34,7 @@ pub enum TransactionType {
 fn process_transaction(
     accounts: &mut HashMap<ClientId, ClientAccount>,
     transaction: ser_form::Transaction,
-    debug_logger: &mut Option<impl std::io::Write>,
+    debug_logger: &mut dyn std::io::Write,
 ) -> Result<(), TransactionProcessingError> {
     let client_account = accounts
         .entry(transaction.client_id)
@@ -48,7 +48,7 @@ fn process_transaction(
 
 pub fn process_transactions_file(
     input_transactions_file: String,
-    debug_logger: &mut Option<impl std::io::Write>,
+    debug_logger: &mut dyn std::io::Write,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut accounts = HashMap::<ClientId, ClientAccount>::new();
     let mut reader = csv::Reader::from_path(input_transactions_file)?;

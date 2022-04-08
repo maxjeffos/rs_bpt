@@ -2,7 +2,7 @@ use rs_batch_process_txns::process_transactions_file;
 
 fn cli(
     args: &[String],
-    debug_logger: &mut Option<impl std::io::Write>,
+    debug_logger: &mut dyn std::io::Write,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let input_file = args.get(0);
 
@@ -17,8 +17,14 @@ fn cli(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let debug_logger = &mut Some(std::io::stderr());
     let args: Vec<String> = std::env::args().collect();
 
-    cli(&args[1..], debug_logger)
+    let debug = false;
+    let mut debug_logger: Box<dyn std::io::Write> = if debug {
+        Box::new(std::io::stderr())
+    } else {
+        Box::new(std::io::sink())
+    };
+
+    cli(&args[1..], &mut debug_logger)
 }
