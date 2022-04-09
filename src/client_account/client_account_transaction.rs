@@ -4,6 +4,7 @@ use crate::ser_form;
 use crate::TransactionId;
 use crate::TransactionType;
 
+#[derive(Debug)]
 pub struct ClientAccountTransaction {
     pub transaction_type: TransactionType,
     pub transaction_id: TransactionId,

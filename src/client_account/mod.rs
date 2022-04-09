@@ -132,7 +132,8 @@ impl ClientAccount {
         _transaction: &ClientAccountTransaction,
         _error: TransactionProcessingError,
     ) {
-        writeln!(debug_logger, "test error message").unwrap();
+        writeln!(debug_logger, "error processing transaction - {}", _error).unwrap();
+        writeln!(debug_logger, "{:?}", _transaction).unwrap();
     }
 
     pub fn process_client_transaction(
@@ -638,6 +639,7 @@ mod tests {
         fn it_should_handle_errors_when_dispute_resolve_or_chargeback_transactions_refer_to_a_non_existing_transaction(
         ) {
             let mut account = ClientAccount::new(1);
+            let mut debug_logger = Vec::<u8>::new();
 
             assert_eq!(
                 account.process_client_transaction(
@@ -646,10 +648,16 @@ mod tests {
                         transaction_id: 1,
                         amount: None,
                     },
-                    &mut std::io::sink(),
+                    &mut debug_logger,
                 ),
                 Ok(()),
             );
+            let error_log_str = std::str::from_utf8(&debug_logger).unwrap();
+            assert!(error_log_str
+                .contains("error processing transaction - ReferencedTransactionNotFound"));
+            assert!(error_log_str.contains("Dispute"));
+            assert!(error_log_str.contains("transaction_id: 1"));
+            debug_logger.clear();
 
             assert_eq!(
                 account.process_client_transaction(
@@ -658,10 +666,16 @@ mod tests {
                         transaction_id: 1,
                         amount: None,
                     },
-                    &mut std::io::sink(),
+                    &mut debug_logger,
                 ),
                 Ok(()),
             );
+            let error_log_str = std::str::from_utf8(&debug_logger).unwrap();
+            assert!(error_log_str
+                .contains("error processing transaction - ReferencedTransactionNotFound"));
+            assert!(error_log_str.contains("Resolve"));
+            assert!(error_log_str.contains("transaction_id: 1"));
+            debug_logger.clear();
 
             assert_eq!(
                 account.process_client_transaction(
@@ -670,10 +684,16 @@ mod tests {
                         transaction_id: 1,
                         amount: None,
                     },
-                    &mut std::io::sink(),
+                    &mut debug_logger,
                 ),
                 Ok(()),
             );
+            let error_log_str = std::str::from_utf8(&debug_logger).unwrap();
+            assert!(error_log_str
+                .contains("error processing transaction - ReferencedTransactionNotFound"));
+            assert!(error_log_str.contains("Chargeback"));
+            assert!(error_log_str.contains("transaction_id: 1"));
+            debug_logger.clear();
         }
 
         // this test is similar to the one with the same name above, but exercises process_client_transaction
