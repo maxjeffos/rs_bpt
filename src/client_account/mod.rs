@@ -47,7 +47,9 @@ impl ClientAccount {
             .disputable_transactions
             .contains_key(&disputable_transaction.transaction_id)
         {
-            Err(TransactionProcessingError::TransactionIDAlreadyExists)
+            Err(TransactionProcessingError::TransactionIDAlreadyExists(
+                disputable_transaction.transaction_id,
+            ))
         } else {
             self.balance.available += disputable_transaction.amount;
             self.disputable_transactions.insert(
@@ -68,7 +70,11 @@ impl ClientAccount {
 
         if let Some(mut referenced_transaction) = maybe_referenced_transaction {
             if referenced_transaction.is_under_dispute {
-                Err(TransactionProcessingError::TransactionAlreadyHasPendingDisupte)
+                Err(
+                    TransactionProcessingError::TransactionAlreadyHasPendingDisupte(
+                        transaction.referenced_transaction_id,
+                    ),
+                )
             } else {
                 let amount = referenced_transaction.amount;
                 self.balance.available -= amount;
@@ -77,7 +83,9 @@ impl ClientAccount {
                 Ok(())
             }
         } else {
-            Err(TransactionProcessingError::ReferencedTransactionNotFound)
+            Err(TransactionProcessingError::ReferencedTransactionNotFound(
+                transaction.referenced_transaction_id,
+            ))
         }
     }
 
@@ -97,10 +105,16 @@ impl ClientAccount {
                 referenced_transaction.is_under_dispute = false;
                 Ok(())
             } else {
-                Err(TransactionProcessingError::TransactionDoesNotHavePendingDisupte)
+                Err(
+                    TransactionProcessingError::TransactionDoesNotHavePendingDisupte(
+                        transaction.referenced_transaction_id,
+                    ),
+                )
             }
         } else {
-            Err(TransactionProcessingError::ReferencedTransactionNotFound)
+            Err(TransactionProcessingError::ReferencedTransactionNotFound(
+                transaction.referenced_transaction_id,
+            ))
         }
     }
 
@@ -119,10 +133,16 @@ impl ClientAccount {
                 self.locked = true;
                 Ok(())
             } else {
-                Err(TransactionProcessingError::TransactionDoesNotHavePendingDisupte)
+                Err(
+                    TransactionProcessingError::TransactionDoesNotHavePendingDisupte(
+                        transaction.referenced_transaction_id,
+                    ),
+                )
             }
         } else {
-            Err(TransactionProcessingError::ReferencedTransactionNotFound)
+            Err(TransactionProcessingError::ReferencedTransactionNotFound(
+                transaction.referenced_transaction_id,
+            ))
         }
     }
 
@@ -219,7 +239,7 @@ mod tests {
                 account.process_disputable_transaction(
                     DisputableTransaction::new_deposit_transaction(1, 200.0),
                 ),
-                Err(TransactionProcessingError::TransactionIDAlreadyExists),
+                Err(TransactionProcessingError::TransactionIDAlreadyExists(1)),
             );
         }
 
@@ -266,17 +286,17 @@ mod tests {
 
         assert_eq!(
             account.process_dispute(DisputeRelatedTransaction::new_dispute_transaction(1)),
-            Err(TransactionProcessingError::ReferencedTransactionNotFound)
+            Err(TransactionProcessingError::ReferencedTransactionNotFound(1))
         );
 
         assert_eq!(
             account.process_resolve(DisputeRelatedTransaction::new_resolve_transaction(1)),
-            Err(TransactionProcessingError::ReferencedTransactionNotFound)
+            Err(TransactionProcessingError::ReferencedTransactionNotFound(1))
         );
 
         assert_eq!(
             account.process_chargeback(DisputeRelatedTransaction::new_chargeback_transaction(1)),
-            Err(TransactionProcessingError::ReferencedTransactionNotFound)
+            Err(TransactionProcessingError::ReferencedTransactionNotFound(1))
         );
     }
 
@@ -318,7 +338,7 @@ mod tests {
         if let Err(the_error) = res {
             assert_eq!(
                 the_error,
-                TransactionProcessingError::TransactionAlreadyHasPendingDisupte
+                TransactionProcessingError::TransactionAlreadyHasPendingDisupte(2)
             );
         } else {
             panic!("Should have returned an error");
@@ -344,7 +364,7 @@ mod tests {
         if let Err(the_error) = res {
             assert_eq!(
                 the_error,
-                TransactionProcessingError::TransactionDoesNotHavePendingDisupte
+                TransactionProcessingError::TransactionDoesNotHavePendingDisupte(1)
             );
         } else {
             panic!("Should have returned an error");
@@ -378,7 +398,7 @@ mod tests {
         if let Err(the_error) = res {
             assert_eq!(
                 the_error,
-                TransactionProcessingError::TransactionDoesNotHavePendingDisupte
+                TransactionProcessingError::TransactionDoesNotHavePendingDisupte(1)
             );
         } else {
             panic!("Should have returned an error");
