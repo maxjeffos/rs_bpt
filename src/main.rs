@@ -3,8 +3,8 @@ use structopt::StructOpt;
 
 use rs_bpt::process_transactions_file;
 
-#[structopt(name = "rs_bpt", about = "Batch process transactions")]
 #[derive(StructOpt, Debug)]
+#[structopt(name = "rs_bpt", about = "Batch process transactions")]
 struct Opt {
     /// debug mode
     #[structopt(short, long)]
