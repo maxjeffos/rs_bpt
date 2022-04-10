@@ -4,7 +4,10 @@ use std::io;
 use serde_derive::Deserialize;
 
 pub mod client_account;
-use client_account::{error::TransactionProcessingError, ClientAccount};
+use client_account::{
+    client_account_transaction::ClientAccountTransaction, error::TransactionProcessingError,
+    ClientAccount,
+};
 pub mod ser_form;
 
 pub type ClientId = u16;
@@ -31,25 +34,28 @@ pub enum TransactionType {
 fn process_transaction(
     accounts: &mut HashMap<ClientId, ClientAccount>,
     transaction: ser_form::Transaction,
+    debug_logger: &mut dyn std::io::Write,
 ) -> Result<(), TransactionProcessingError> {
     let client_account = accounts
         .entry(transaction.client_id)
         .or_insert_with(|| ClientAccount::new(transaction.client_id));
 
-    client_account.process_transaction(transaction)?;
+    let client_account_transaction = ClientAccountTransaction::from(transaction);
+    client_account.process_client_transaction(client_account_transaction, debug_logger)?;
 
     Ok(())
 }
 
 pub fn process_transactions_file(
     input_transactions_file: String,
+    debug_logger: &mut dyn std::io::Write,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut accounts = HashMap::<ClientId, ClientAccount>::new();
     let mut reader = csv::Reader::from_path(input_transactions_file)?;
 
     for result in reader.deserialize() {
         let transation: ser_form::Transaction = result.unwrap();
-        process_transaction(&mut accounts, transation)?;
+        process_transaction(&mut accounts, transation, debug_logger)?;
     }
 
     let output_format_outputs: Vec<ser_form::Output> = accounts

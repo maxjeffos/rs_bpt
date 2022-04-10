@@ -1,24 +1,37 @@
-use rs_batch_process_txns::process_transactions_file;
+use std::path::PathBuf;
+use structopt::StructOpt;
 
-fn cli(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    let input_file = args.get(0);
+use rs_bpt::process_transactions_file;
 
-    if let Some(input_file) = input_file {
-        process_transactions_file(input_file.to_string())
-    } else {
-        Err(
-            "Expected exactly one intput argument - the transactions file you want to process"
-                .into(),
-        )
-    }
+#[structopt(name = "rs_bpt", about = "Batch process transactions")]
+#[derive(StructOpt, Debug)]
+struct Opt {
+    /// debug mode
+    #[structopt(short, long)]
+    debug: bool,
+
+    /// Input file
+    #[structopt(parse(from_os_str))]
+    input: PathBuf,
+}
+
+fn cli(
+    input_file: &str,
+    debug_logger: &mut dyn std::io::Write,
+) -> Result<(), Box<dyn std::error::Error>> {
+    process_transactions_file(input_file.to_string(), debug_logger)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = std::env::args().collect();
-    cli(&args[1..])
-}
+    let opt = Opt::from_args();
+    let transactions_file = opt.input.to_str().unwrap();
+    let debug = opt.debug;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+    let mut debug_logger: Box<dyn std::io::Write> = if debug {
+        Box::new(std::io::stderr())
+    } else {
+        Box::new(std::io::sink())
+    };
+
+    cli(transactions_file, &mut debug_logger)
 }
