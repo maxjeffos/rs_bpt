@@ -12,9 +12,9 @@ fn test_simple() -> Result<(), Box<dyn std::error::Error>> {
         "client,available,held,total,locked",
     ));
     cmd.assert()
-        .stdout(predicate::str::contains("2,-1.0,0.0,-1.0,false"));
+        .stdout(predicate::str::contains("2,-1.0000,0.0000,-1.0000,false"));
     cmd.assert()
-        .stdout(predicate::str::contains("1,1.5,0.0,1.5,false"));
+        .stdout(predicate::str::contains("1,1.5000,0.0000,1.5000,false"));
 
     Ok(())
 }
@@ -30,9 +30,9 @@ fn it_works_without_errors() -> Result<(), Box<dyn std::error::Error>> {
         "client,available,held,total,locked",
     ));
     cmd.assert()
-        .stdout(predicate::str::contains("2,-1.0,0.0,-1.0,false"));
+        .stdout(predicate::str::contains("2,-1.0000,0.0000,-1.0000,false"));
     cmd.assert()
-        .stdout(predicate::str::contains("1,1.5,0.0,1.5,false"));
+        .stdout(predicate::str::contains("1,1.5000,0.0000,1.5000,false"));
 
     cmd.assert().stderr(predicate::str::is_empty());
 
@@ -51,7 +51,7 @@ fn it_ignores_dupe_transaction_id_but_logs_error_if_debug_mode(
         "client,available,held,total,locked",
     ));
     cmd.assert()
-        .stdout(predicate::str::contains("1,1.0,0.0,1.0,false"));
+        .stdout(predicate::str::contains("1,1.0000,0.0000,1.0000,false"));
     cmd.assert()
         .stderr(predicate::str::contains("TransactionIDAlreadyExists"));
     cmd.assert()
@@ -70,12 +70,12 @@ fn test_complex() -> Result<(), Box<dyn std::error::Error>> {
     // and because the clients are stored in a HashMap which doesn't preserve order,
     // I'll assert the output should be one or the other or the following.
     let expected_stdout_order1 = r#"client,available,held,total,locked
-1,110.0,0.0,110.0,false
-2,1000.0,0.0,1000.0,true
+1,110.0000,0.0000,110.0000,false
+2,1000.0000,0.0000,1000.0000,true
 "#;
     let expected_stdout_order2 = r#"client,available,held,total,locked
-2,1000.0,0.0,1000.0,true
-1,110.0,0.0,110.0,false
+2,1000.0000,0.0000,1000.0000,true
+1,110.0000,0.0000,110.0000,false
 "#;
 
     cmd.assert().success();

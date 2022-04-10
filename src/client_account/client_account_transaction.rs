@@ -1,6 +1,6 @@
 use std::convert::From;
 
-use crate::ser_form;
+use crate::serializable_form;
 use crate::TransactionId;
 use crate::TransactionType;
 
@@ -11,8 +11,8 @@ pub struct ClientAccountTransaction {
     pub amount: Option<f64>, // TODO: make this a decimal
 }
 
-impl From<ser_form::Transaction> for ClientAccountTransaction {
-    fn from(transaction: ser_form::Transaction) -> Self {
+impl From<serializable_form::Transaction> for ClientAccountTransaction {
+    fn from(transaction: serializable_form::Transaction) -> Self {
         ClientAccountTransaction {
             transaction_type: transaction.transaction_type,
             transaction_id: transaction.transaction_id,

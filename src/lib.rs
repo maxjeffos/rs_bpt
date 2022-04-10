@@ -1,14 +1,13 @@
+use serde_derive::Deserialize;
 use std::collections::HashMap;
 use std::io;
-
-use serde_derive::Deserialize;
 
 pub mod client_account;
 use client_account::{
     client_account_transaction::ClientAccountTransaction, error::TransactionProcessingError,
     ClientAccount,
 };
-pub mod ser_form;
+pub mod serializable_form;
 
 pub type ClientId = u16;
 pub type TransactionId = u32;
@@ -33,7 +32,7 @@ pub enum TransactionType {
 
 fn process_transaction(
     accounts: &mut HashMap<ClientId, ClientAccount>,
-    transaction: ser_form::Transaction,
+    transaction: serializable_form::Transaction,
     debug_logger: &mut dyn std::io::Write,
 ) -> Result<(), TransactionProcessingError> {
     let client_account = accounts
@@ -54,24 +53,25 @@ pub fn process_transactions_file(
     let mut reader = csv::Reader::from_path(input_transactions_file)?;
 
     for result in reader.deserialize() {
-        let transation: ser_form::Transaction = result.unwrap();
+        let transation: serializable_form::Transaction = result.unwrap();
         process_transaction(&mut accounts, transation, debug_logger)?;
     }
 
-    let output_format_outputs: Vec<ser_form::Output> = accounts
+    let output_format_outputs: Vec<serializable_form::Output> = accounts
         .iter()
-        .map(|(client_id, account)| ser_form::Output {
-            client: *client_id,
-            available: account.balance.available,
-            held: account.balance.held,
-            total: account.balance.total(),
-            locked: account.locked,
+        .map(|(client_id, account)| {
+            serializable_form::Output::new(
+                *client_id,
+                account.balance.available,
+                account.balance.held,
+                account.balance.total(),
+                account.locked,
+            )
         })
         .collect();
 
     // write CSV output
     let mut stdout_writer = csv::Writer::from_writer(io::stdout());
-    // stdout_writer.write_record(&["client", "available", "held", "total", "locked"]).expect("failed to write CSV header");
     for output in output_format_outputs {
         stdout_writer
             .serialize(output)
