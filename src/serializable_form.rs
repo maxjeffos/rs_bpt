@@ -27,7 +27,7 @@ impl Output {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Transaction {
     #[serde(rename = "type")]
     pub transaction_type: TransactionType,
