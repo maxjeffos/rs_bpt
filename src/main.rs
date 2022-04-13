@@ -26,5 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Box::new(std::io::sink())
     };
 
-    cli(transactions_file, &mut debug_logger)
+    let mut stdout_stream = Box::new(std::io::stdout());
+
+    cli(transactions_file, &mut stdout_stream, &mut debug_logger)
 }

@@ -62,12 +62,12 @@ pub fn process_transactions_file(
 
 pub fn write_output(
     output: &[serializable_form::Output],
+    output_stream: &mut dyn std::io::Write,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut stdout_writer = csv::Writer::from_writer(io::stdout());
+    let mut cvs_output_writer = csv::Writer::from_writer(output_stream);
+
     for output in output {
-        stdout_writer
-            .serialize(output)
-            .expect("failed to write CSV record");
+        cvs_output_writer.serialize(output)?;
     }
 
     Ok(())
@@ -92,13 +92,14 @@ pub fn create_serializable_output_from_accounts(
 
 pub fn cli(
     input_file: PathBuf,
+    output_stream: &mut dyn std::io::Write,
     debug_logger: &mut dyn std::io::Write,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut accounts = HashMap::<ClientId, ClientAccount>::new();
     process_transactions_file(&mut accounts, input_file, debug_logger)?;
 
     let serializable_output = create_serializable_output_from_accounts(&accounts);
-    write_output(&serializable_output)?;
+    write_output(&serializable_output, output_stream)?;
 
     Ok(())
 }
