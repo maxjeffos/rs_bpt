@@ -1,10 +1,9 @@
+use anyhow::anyhow;
 use rust_decimal::prelude::*;
 use rust_decimal::Decimal;
 use serde_derive::{Deserialize, Serialize};
 
-use crate::ClientId;
-use crate::TransactionId;
-use crate::TransactionType;
+use crate::{ClientAccount, ClientId, TransactionId, TransactionType};
 
 #[derive(Debug, Serialize)]
 pub struct Output {
@@ -16,14 +15,14 @@ pub struct Output {
 }
 
 impl Output {
-    pub fn new(client: ClientId, available: f64, held: f64, total: f64, locked: bool) -> Self {
-        Self {
-            client,
-            available: round_f64_4dp_string(available).expect("failed to represent f64 as decimal"),
-            held: round_f64_4dp_string(held).expect("failed to represent f64 as decimal"),
-            total: round_f64_4dp_string(total).expect("failed to represent f64 as decimal"),
-            locked,
-        }
+    pub fn from_client_account(client_account: &ClientAccount) -> anyhow::Result<Self> {
+        Ok(Self {
+            client: client_account.client_id,
+            available: round_f64_4dp_string(client_account.balance.available)?,
+            held: round_f64_4dp_string(client_account.balance.held)?,
+            total: round_f64_4dp_string(client_account.balance.total())?,
+            locked: client_account.locked,
+        })
     }
 }
 
@@ -42,8 +41,8 @@ pub struct Transaction {
 }
 
 /// Round an f64 to a Decimal using "Banker's Rounding" with max 4 decimal places and represent it as a String
-fn round_f64_4dp_string(x: f64) -> Result<String, &'static str> {
-    let d = Decimal::from_f64(x).ok_or("Error converting f64 to Decimal")?;
+fn round_f64_4dp_string(x: f64) -> anyhow::Result<String> {
+    let d = Decimal::from_f64(x).ok_or(anyhow!("Failed to represent f64 as Decimal: {}", x))?;
     let rounded_decimal = d.round_dp(4);
     Ok(format!("{:.4}", rounded_decimal))
 }

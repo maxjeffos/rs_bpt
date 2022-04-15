@@ -1,6 +1,5 @@
 use serde_derive::Deserialize;
 use std::collections::HashMap;
-use std::io;
 use std::path::PathBuf;
 
 pub mod client_account;
@@ -75,19 +74,14 @@ pub fn write_output(
 
 pub fn create_serializable_output_from_accounts(
     accounts: &HashMap<ClientId, ClientAccount>,
-) -> Vec<serializable_form::Output> {
-    accounts
-        .iter()
-        .map(|(client_id, account)| {
-            serializable_form::Output::new(
-                *client_id,
-                account.balance.available,
-                account.balance.held,
-                account.balance.total(),
-                account.locked,
-            )
-        })
-        .collect()
+) -> anyhow::Result<Vec<serializable_form::Output>> {
+    let mut output = Vec::new();
+    for (_, client_account) in accounts {
+        output.push(serializable_form::Output::from_client_account(
+            client_account,
+        )?);
+    }
+    Ok(output)
 }
 
 pub fn cli(
@@ -98,7 +92,7 @@ pub fn cli(
     let mut accounts = HashMap::<ClientId, ClientAccount>::new();
     process_transactions_file(&mut accounts, input_file, debug_logger)?;
 
-    let serializable_output = create_serializable_output_from_accounts(&accounts);
+    let serializable_output = create_serializable_output_from_accounts(&accounts)?;
     write_output(&serializable_output, output_stream)?;
 
     Ok(())
@@ -225,7 +219,7 @@ mod tests {
         assert_eq!(accounts[&2].balance.total(), 1000.0);
         assert_eq!(accounts[&2].locked, true);
 
-        let output = create_serializable_output_from_accounts(&accounts);
+        let output = create_serializable_output_from_accounts(&accounts).unwrap();
 
         assert_eq!(output.len(), 2);
         let client_1_output = output.iter().find(|output| output.client == 1).unwrap();
