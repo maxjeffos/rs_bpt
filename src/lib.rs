@@ -100,8 +100,6 @@ pub fn cli(
 
 #[cfg(test)]
 mod tests {
-    use assert_cmd::assert;
-
     use super::*;
 
     #[test]

@@ -1,8 +1,6 @@
 use std::convert::From;
 
-use crate::serializable_form;
-use crate::TransactionId;
-use crate::TransactionType;
+use crate::{serializable_form, TransactionId, TransactionType};
 
 #[derive(Debug)]
 pub struct ClientAccountTransaction {
