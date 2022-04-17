@@ -42,7 +42,8 @@ pub struct Transaction {
 
 /// Round an f64 to a Decimal using "Banker's Rounding" with max 4 decimal places and represent it as a String
 fn round_f64_4dp_string(x: f64) -> anyhow::Result<String> {
-    let d = Decimal::from_f64(x).ok_or(anyhow!("Failed to represent f64 as Decimal: {}", x))?;
+    let d =
+        Decimal::from_f64(x).ok_or_else(|| anyhow!("Failed to represent f64 as Decimal: {}", x))?;
     let rounded_decimal = d.round_dp(4);
     Ok(format!("{:.4}", rounded_decimal))
 }
