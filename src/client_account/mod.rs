@@ -149,8 +149,9 @@ impl ClientAccount {
         _transaction: &ClientAccountTransaction,
         _error: TransactionProcessingError,
     ) {
-        writeln!(debug_logger, "error processing transaction - {}", _error).unwrap();
-        writeln!(debug_logger, "{:?}", _transaction).unwrap();
+        writeln!(debug_logger, "error processing transaction - {}", _error)
+            .expect("error writing to debug stream");
+        writeln!(debug_logger, "{:?}", _transaction).expect("error writing to debug stream");
     }
 
     pub fn process_client_transaction(
