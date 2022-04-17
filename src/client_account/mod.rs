@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{hash_map, HashMap};
 
 use crate::{ClientId, TransactionId, TransactionType};
 
@@ -34,7 +34,7 @@ impl ClientAccount {
         Self {
             client_id,
             disputable_transactions: HashMap::new(),
-            balance: AccountBalance::new(),
+            balance: AccountBalance::default(),
             locked: false,
         }
     }

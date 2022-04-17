@@ -4,14 +4,16 @@ pub struct AccountBalance {
     pub held: f64,
 }
 
-impl AccountBalance {
-    pub fn new() -> AccountBalance {
-        AccountBalance {
+impl Default for AccountBalance {
+    fn default() -> Self {
+        Self {
             available: 0.0,
             held: 0.0,
         }
     }
+}
 
+impl AccountBalance {
     pub fn total(&self) -> f64 {
         self.available + self.held
     }
