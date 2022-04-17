@@ -43,20 +43,17 @@ impl ClientAccount {
         &mut self,
         disputable_transaction: DisputableTransaction,
     ) -> Result<(), TransactionProcessingError> {
-        if self
+        if let hash_map::Entry::Vacant(e) = self
             .disputable_transactions
-            .contains_key(&disputable_transaction.transaction_id)
+            .entry(disputable_transaction.transaction_id)
         {
+            self.balance.available += disputable_transaction.amount;
+            e.insert(disputable_transaction);
+            Ok(())
+        } else {
             Err(TransactionProcessingError::TransactionIDAlreadyExists(
                 disputable_transaction.transaction_id,
             ))
-        } else {
-            self.balance.available += disputable_transaction.amount;
-            self.disputable_transactions.insert(
-                disputable_transaction.transaction_id,
-                disputable_transaction,
-            );
-            Ok(())
         }
     }
 
