@@ -1,6 +1,6 @@
 use serde_derive::Deserialize;
-use std::collections::HashMap;
 use std::path::PathBuf;
+use std::{collections::HashMap, path::Path};
 
 pub mod client_account;
 use client_account::{
@@ -100,6 +100,8 @@ pub fn cli(
 
 #[cfg(test)]
 mod tests {
+    use assert_cmd::assert;
+
     use super::*;
 
     #[test]
@@ -234,5 +236,31 @@ mod tests {
         assert_eq!(client_2_output.held, "0.0000");
         assert_eq!(client_2_output.total, "1000.0000");
         assert_eq!(client_2_output.locked, true);
+    }
+
+    #[test]
+    fn test_cli() {
+        let mut output_writer = Vec::<u8>::new();
+        let mut debug_writer = Vec::<u8>::new();
+
+        let input_file = Path::new("tests/fixtures/transactions.csv").to_owned();
+
+        cli(input_file, &mut output_writer, &mut debug_writer).unwrap();
+
+        let output_string = String::from_utf8(output_writer).unwrap();
+        let debug_string = String::from_utf8(debug_writer).unwrap();
+
+        assert_eq!(debug_string, "");
+
+        let expected_stdout_order1 = r#"client,available,held,total,locked
+1,1.5000,0.0000,1.5000,false
+2,-1.0000,0.0000,-1.0000,false
+"#;
+        let expected_stdout_order2 = r#"client,available,held,total,locked
+2,-1.0000,0.0000,-1.0000,false
+1,1.5000,0.0000,1.5000,false
+"#;
+
+        assert!(output_string == expected_stdout_order1 || output_string == expected_stdout_order2);
     }
 }
