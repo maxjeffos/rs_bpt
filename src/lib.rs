@@ -76,7 +76,7 @@ pub fn create_serializable_output_from_accounts(
     accounts: &HashMap<ClientId, ClientAccount>,
 ) -> anyhow::Result<Vec<serializable_form::Output>> {
     let mut output = Vec::new();
-    for (_, client_account) in accounts {
+    for client_account in accounts.values() {
         output.push(serializable_form::Output::from_client_account(
             client_account,
         )?);
