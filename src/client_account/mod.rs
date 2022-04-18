@@ -17,10 +17,6 @@ use client_account_transaction::ClientAccountTransaction;
 pub mod account_balance;
 use account_balance::AccountBalance;
 
-pub enum NonIgnoredErrors {
-    ReferencedTransactionNotFound,
-}
-
 #[derive(Debug)]
 pub struct ClientAccount {
     pub client_id: ClientId,
