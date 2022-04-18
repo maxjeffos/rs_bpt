@@ -155,73 +155,48 @@ impl ClientAccount {
         transaction: ClientAccountTransaction,
         debug_logger: &mut dyn std::io::Write,
     ) -> Result<(), TransactionProcessingError> {
-        match transaction.transaction_type {
+        let res: Result<(), TransactionProcessingError> = match transaction.transaction_type {
             TransactionType::Deposit => {
                 if let Some(amount) = transaction.amount {
-                    let deposit_transaction = DisputableTransaction::new_deposit_transaction(
-                        transaction.transaction_id,
-                        amount,
-                    );
-
-                    let res = self.process_disputable_transaction(deposit_transaction);
-                    if let Err(inner_error) = res {
-                        self.log_error(debug_logger, &transaction, inner_error);
-                    }
-                } else {
-                    self.log_error(
-                        debug_logger,
-                        &transaction,
-                        TransactionProcessingError::AmountNotPresentForDeposit(
+                    self.process_disputable_transaction(
+                        DisputableTransaction::new_deposit_transaction(
                             transaction.transaction_id,
+                            amount,
                         ),
                     )
+                } else {
+                    Err(TransactionProcessingError::AmountNotPresentForDeposit(
+                        transaction.transaction_id,
+                    ))
                 }
             }
             TransactionType::Withdrawal => {
                 if let Some(amount) = transaction.amount {
-                    let deposit_transaction = DisputableTransaction::new_withdrawal_transaction(
-                        transaction.transaction_id,
-                        amount,
-                    );
-                    let res = self.process_disputable_transaction(deposit_transaction);
-                    if let Err(inner_error) = res {
-                        self.log_error(debug_logger, &transaction, inner_error);
-                    }
-                } else {
-                    self.log_error(
-                        debug_logger,
-                        &transaction,
-                        TransactionProcessingError::AmountNotPresentForWithdrawal(
+                    self.process_disputable_transaction(
+                        DisputableTransaction::new_withdrawal_transaction(
                             transaction.transaction_id,
+                            amount,
                         ),
                     )
+                } else {
+                    Err(TransactionProcessingError::AmountNotPresentForWithdrawal(
+                        transaction.transaction_id,
+                    ))
                 }
             }
-            TransactionType::Dispute => {
-                let dispute_transaction =
-                    DisputeRelatedTransaction::new_dispute_transaction(transaction.transaction_id);
-                let res = self.process_dispute(dispute_transaction);
-                if let Err(inner_error) = res {
-                    self.log_error(debug_logger, &transaction, inner_error);
-                }
-            }
-            TransactionType::Resolve => {
-                let resolve_transaction =
-                    DisputeRelatedTransaction::new_resolve_transaction(transaction.transaction_id);
-                let res = self.process_resolve(resolve_transaction);
-                if let Err(inner_error) = res {
-                    self.log_error(debug_logger, &transaction, inner_error);
-                }
-            }
-            TransactionType::Chargeback => {
-                let resolve_transaction = DisputeRelatedTransaction::new_chargeback_transaction(
-                    transaction.transaction_id,
-                );
-                let res = self.process_chargeback(resolve_transaction);
-                if let Err(inner_error) = res {
-                    self.log_error(debug_logger, &transaction, inner_error);
-                }
-            }
+            TransactionType::Dispute => self.process_dispute(
+                DisputeRelatedTransaction::new_dispute_transaction(transaction.transaction_id),
+            ),
+            TransactionType::Resolve => self.process_resolve(
+                DisputeRelatedTransaction::new_resolve_transaction(transaction.transaction_id),
+            ),
+            TransactionType::Chargeback => self.process_chargeback(
+                DisputeRelatedTransaction::new_chargeback_transaction(transaction.transaction_id),
+            ),
+        };
+
+        if let Err(e) = res {
+            self.log_error(debug_logger, &transaction, e);
         }
 
         Ok(())
