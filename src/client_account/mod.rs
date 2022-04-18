@@ -154,7 +154,7 @@ impl ClientAccount {
         &mut self,
         transaction: ClientAccountTransaction,
         debug_logger: &mut dyn std::io::Write,
-    ) -> Result<(), TransactionProcessingError> {
+    ) {
         let res: Result<(), TransactionProcessingError> = match transaction.transaction_type {
             TransactionType::Deposit => {
                 if let Some(amount) = transaction.amount {
@@ -198,8 +198,6 @@ impl ClientAccount {
         if let Err(e) = res {
             self.log_error(debug_logger, &transaction, e);
         }
-
-        Ok(())
     }
 }
 
@@ -587,16 +585,14 @@ mod tests {
             let mut account = ClientAccount::new(1);
             let mut debug_logger = Vec::<u8>::new();
 
-            account
-                .process_client_transaction(
-                    ClientAccountTransaction {
-                        transaction_type: TransactionType::Deposit,
-                        transaction_id: 1,
-                        amount: Some(100.0),
-                    },
-                    &mut debug_logger,
-                )
-                .unwrap();
+            account.process_client_transaction(
+                ClientAccountTransaction {
+                    transaction_type: TransactionType::Deposit,
+                    transaction_id: 1,
+                    amount: Some(100.0),
+                },
+                &mut debug_logger,
+            );
             assert_eq!(account.balance.available, 100.0);
             assert_eq!(account.balance.held, 0.0);
             assert_eq!(account.balance.total(), 100.0);
@@ -605,16 +601,13 @@ mod tests {
             assert_eq!(error_log_str, "",);
 
             // another transaction (deposit) with the same transaction id
-            assert_eq!(
-                account.process_client_transaction(
-                    ClientAccountTransaction {
-                        transaction_type: TransactionType::Deposit,
-                        transaction_id: 1,
-                        amount: Some(200.0),
-                    },
-                    &mut debug_logger,
-                ),
-                Ok(()),
+            account.process_client_transaction(
+                ClientAccountTransaction {
+                    transaction_type: TransactionType::Deposit,
+                    transaction_id: 1,
+                    amount: Some(200.0),
+                },
+                &mut debug_logger,
             );
             assert_eq!(account.balance.available, 100.0);
             assert_eq!(account.balance.held, 0.0);
@@ -629,16 +622,14 @@ mod tests {
             debug_logger.clear();
 
             // another transaction (withdrawal) with the same transaction id
-            assert_eq!(
-                account.process_client_transaction(
-                    ClientAccountTransaction {
-                        transaction_type: TransactionType::Withdrawal,
-                        transaction_id: 1,
-                        amount: Some(50.0),
-                    },
-                    &mut debug_logger,
-                ),
-                Ok(()),
+
+            account.process_client_transaction(
+                ClientAccountTransaction {
+                    transaction_type: TransactionType::Withdrawal,
+                    transaction_id: 1,
+                    amount: Some(50.0),
+                },
+                &mut debug_logger,
             );
             assert_eq!(account.balance.available, 100.0);
             assert_eq!(account.balance.held, 0.0);
@@ -659,16 +650,14 @@ mod tests {
             let mut debug_logger = Vec::<u8>::new();
 
             // deposit
-            account
-                .process_client_transaction(
-                    ClientAccountTransaction {
-                        transaction_type: TransactionType::Deposit,
-                        transaction_id: 1,
-                        amount: None,
-                    },
-                    &mut debug_logger,
-                )
-                .unwrap();
+            account.process_client_transaction(
+                ClientAccountTransaction {
+                    transaction_type: TransactionType::Deposit,
+                    transaction_id: 1,
+                    amount: None,
+                },
+                &mut debug_logger,
+            );
             assert_eq!(account.balance.available, 0.0);
             assert_eq!(account.balance.held, 0.0);
             assert_eq!(account.balance.total(), 0.0);
@@ -683,16 +672,14 @@ mod tests {
             debug_logger.clear();
 
             // same for a withdrawal
-            account
-                .process_client_transaction(
-                    ClientAccountTransaction {
-                        transaction_type: TransactionType::Withdrawal,
-                        transaction_id: 1,
-                        amount: None,
-                    },
-                    &mut debug_logger,
-                )
-                .unwrap();
+            account.process_client_transaction(
+                ClientAccountTransaction {
+                    transaction_type: TransactionType::Withdrawal,
+                    transaction_id: 1,
+                    amount: None,
+                },
+                &mut debug_logger,
+            );
             assert_eq!(account.balance.available, 0.0);
             assert_eq!(account.balance.held, 0.0);
             assert_eq!(account.balance.total(), 0.0);
@@ -716,16 +703,13 @@ mod tests {
             let mut account = ClientAccount::new(1);
             let mut debug_logger = Vec::<u8>::new();
 
-            assert_eq!(
-                account.process_client_transaction(
-                    ClientAccountTransaction {
-                        transaction_type: TransactionType::Dispute,
-                        transaction_id: 1,
-                        amount: None,
-                    },
-                    &mut debug_logger,
-                ),
-                Ok(()),
+            account.process_client_transaction(
+                ClientAccountTransaction {
+                    transaction_type: TransactionType::Dispute,
+                    transaction_id: 1,
+                    amount: None,
+                },
+                &mut debug_logger,
             );
             let error_log_str = std::str::from_utf8(&debug_logger).unwrap();
             assert!(error_log_str
@@ -734,16 +718,13 @@ mod tests {
             assert!(error_log_str.contains("transaction_id: 1"));
             debug_logger.clear();
 
-            assert_eq!(
-                account.process_client_transaction(
-                    ClientAccountTransaction {
-                        transaction_type: TransactionType::Resolve,
-                        transaction_id: 1,
-                        amount: None,
-                    },
-                    &mut debug_logger,
-                ),
-                Ok(()),
+            account.process_client_transaction(
+                ClientAccountTransaction {
+                    transaction_type: TransactionType::Resolve,
+                    transaction_id: 1,
+                    amount: None,
+                },
+                &mut debug_logger,
             );
             let error_log_str = std::str::from_utf8(&debug_logger).unwrap();
             assert!(error_log_str
@@ -752,16 +733,13 @@ mod tests {
             assert!(error_log_str.contains("transaction_id: 1"));
             debug_logger.clear();
 
-            assert_eq!(
-                account.process_client_transaction(
-                    ClientAccountTransaction {
-                        transaction_type: TransactionType::Chargeback,
-                        transaction_id: 1,
-                        amount: None,
-                    },
-                    &mut debug_logger,
-                ),
-                Ok(()),
+            account.process_client_transaction(
+                ClientAccountTransaction {
+                    transaction_type: TransactionType::Chargeback,
+                    transaction_id: 1,
+                    amount: None,
+                },
+                &mut debug_logger,
             );
             let error_log_str = std::str::from_utf8(&debug_logger).unwrap();
             assert!(error_log_str
@@ -783,9 +761,7 @@ mod tests {
                 transaction_id: 1,
                 amount: Some(100.0),
             };
-            account
-                .process_client_transaction(deposit, &mut debug_logger)
-                .unwrap();
+            account.process_client_transaction(deposit, &mut debug_logger);
             assert_eq!(account.disputable_transactions.len(), 1);
             assert_eq!(account.balance.available, 100.0);
             assert_eq!(account.balance.held, 0.0);
@@ -798,9 +774,7 @@ mod tests {
                 transaction_id: 2,
                 amount: Some(10.0),
             };
-            account
-                .process_client_transaction(transaction_to_dispute, &mut debug_logger)
-                .unwrap();
+            account.process_client_transaction(transaction_to_dispute, &mut debug_logger);
             assert_eq!(account.disputable_transactions.len(), 2);
             assert_eq!(account.balance.available, 110.0);
             assert_eq!(account.balance.held, 0.0);
@@ -813,9 +787,7 @@ mod tests {
                 transaction_id: 2,
                 amount: None,
             };
-            account
-                .process_client_transaction(dispute, &mut debug_logger)
-                .unwrap();
+            account.process_client_transaction(dispute, &mut debug_logger);
             assert_eq!(account.disputable_transactions.len(), 2);
             assert_eq!(account.balance.available, 100.0);
             assert_eq!(account.balance.held, 10.0);
@@ -833,9 +805,7 @@ mod tests {
                 transaction_id: 2,
                 amount: None,
             };
-            account
-                .process_client_transaction(resolve, &mut debug_logger)
-                .unwrap();
+            account.process_client_transaction(resolve, &mut debug_logger);
 
             assert_eq!(account.disputable_transactions.len(), 2);
             assert_eq!(account.balance.available, 110.0);

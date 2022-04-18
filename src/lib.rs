@@ -40,7 +40,7 @@ fn process_transaction(
         .or_insert_with(|| ClientAccount::new(transaction.client_id));
 
     let client_account_transaction = ClientAccountTransaction::from(transaction);
-    client_account.process_client_transaction(client_account_transaction, debug_logger)?;
+    client_account.process_client_transaction(client_account_transaction, debug_logger);
 
     Ok(())
 }
