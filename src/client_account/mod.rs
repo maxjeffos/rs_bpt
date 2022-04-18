@@ -142,12 +142,12 @@ impl ClientAccount {
     fn log_error(
         &self,
         debug_logger: &mut dyn std::io::Write,
-        _transaction: &ClientAccountTransaction,
-        _error: TransactionProcessingError,
+        transaction: &ClientAccountTransaction,
+        error: TransactionProcessingError,
     ) {
-        writeln!(debug_logger, "error processing transaction - {}", _error)
+        writeln!(debug_logger, "error processing transaction - {}", error)
             .expect("error writing to debug stream");
-        writeln!(debug_logger, "{:?}", _transaction).expect("error writing to debug stream");
+        writeln!(debug_logger, "{:?}", transaction).expect("error writing to debug stream");
     }
 
     pub fn process_client_transaction(
