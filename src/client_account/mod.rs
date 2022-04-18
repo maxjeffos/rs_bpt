@@ -610,6 +610,7 @@ mod tests {
         fn it_should_ignore_errors_generated_from_process_disputable_transaction_when_transaction_id_already_exists(
         ) {
             let mut account = ClientAccount::new(1);
+            let mut debug_logger = Vec::<u8>::new();
 
             account
                 .process_client_transaction(
@@ -618,14 +619,17 @@ mod tests {
                         transaction_id: 1,
                         amount: Some(100.0),
                     },
-                    &mut std::io::sink(),
+                    &mut debug_logger,
                 )
                 .unwrap();
             assert_eq!(account.balance.available, 100.0);
             assert_eq!(account.balance.held, 0.0);
             assert_eq!(account.balance.total(), 100.0);
             assert_eq!(account.locked, false);
+            let error_log_str = std::str::from_utf8(&debug_logger).unwrap();
+            assert_eq!(error_log_str, "",);
 
+            // another transaction (deposit) with the same transaction id
             assert_eq!(
                 account.process_client_transaction(
                     ClientAccountTransaction {
@@ -633,7 +637,7 @@ mod tests {
                         transaction_id: 1,
                         amount: Some(200.0),
                     },
-                    &mut std::io::sink(),
+                    &mut debug_logger,
                 ),
                 Ok(()),
             );
@@ -641,7 +645,15 @@ mod tests {
             assert_eq!(account.balance.held, 0.0);
             assert_eq!(account.balance.total(), 100.0);
             assert_eq!(account.locked, false);
+            let error_log_str = std::str::from_utf8(&debug_logger).unwrap();
+            assert!(
+                error_log_str.contains("error processing transaction - TransactionIDAlreadyExists")
+            );
+            assert!(error_log_str.contains("Deposit"));
+            assert!(error_log_str.contains("transaction_id: 1"));
+            debug_logger.clear();
 
+            // another transaction (withdrawal) with the same transaction id
             assert_eq!(
                 account.process_client_transaction(
                     ClientAccountTransaction {
@@ -649,7 +661,7 @@ mod tests {
                         transaction_id: 1,
                         amount: Some(50.0),
                     },
-                    &mut std::io::sink(),
+                    &mut debug_logger,
                 ),
                 Ok(()),
             );
@@ -657,6 +669,13 @@ mod tests {
             assert_eq!(account.balance.held, 0.0);
             assert_eq!(account.balance.total(), 100.0);
             assert_eq!(account.locked, false);
+            let error_log_str = std::str::from_utf8(&debug_logger).unwrap();
+            assert!(
+                error_log_str.contains("error processing transaction - TransactionIDAlreadyExists")
+            );
+            assert!(error_log_str.contains("Withdrawal"));
+            assert!(error_log_str.contains("transaction_id: 1"));
+            debug_logger.clear();
         }
 
         #[test]
@@ -685,7 +704,7 @@ mod tests {
                 error_log_str.contains("error processing transaction - AmountNotPresentForDeposit")
             );
             assert!(error_log_str.contains("Deposit"));
-            assert!(error_log_str.contains("transaction_id: "));
+            assert!(error_log_str.contains("transaction_id: 1"));
             debug_logger.clear();
 
             // same for a withdrawal
@@ -708,7 +727,7 @@ mod tests {
             assert!(error_log_str
                 .contains("error processing transaction - AmountNotPresentForWithdrawal"));
             assert!(error_log_str.contains("Withdrawal"));
-            assert!(error_log_str.contains("transaction_id: "));
+            assert!(error_log_str.contains("transaction_id: 1"));
             debug_logger.clear();
         }
 
