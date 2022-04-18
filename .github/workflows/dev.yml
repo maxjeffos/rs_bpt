@@ -15,8 +15,11 @@ jobs:
     - name: Show environment
       run: cargo --version
     
-    - name: Run checks
+    - name: Run format check
       run: cargo fmt -- --check
+      
+    - name: Run lint check
+      run: cargo clippy
       
     - name: Cargo Check
       run: cargo check

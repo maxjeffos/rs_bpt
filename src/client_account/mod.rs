@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{hash_map, HashMap};
 
 use crate::{ClientId, TransactionId, TransactionType};
 
@@ -17,10 +17,6 @@ use client_account_transaction::ClientAccountTransaction;
 pub mod account_balance;
 use account_balance::AccountBalance;
 
-pub enum NonIgnoredErrors {
-    ReferencedTransactionNotFound,
-}
-
 #[derive(Debug)]
 pub struct ClientAccount {
     pub client_id: ClientId,
@@ -34,7 +30,7 @@ impl ClientAccount {
         Self {
             client_id,
             disputable_transactions: HashMap::new(),
-            balance: AccountBalance::new(),
+            balance: AccountBalance::default(),
             locked: false,
         }
     }
@@ -43,20 +39,17 @@ impl ClientAccount {
         &mut self,
         disputable_transaction: DisputableTransaction,
     ) -> Result<(), TransactionProcessingError> {
-        if self
+        if let hash_map::Entry::Vacant(e) = self
             .disputable_transactions
-            .contains_key(&disputable_transaction.transaction_id)
+            .entry(disputable_transaction.transaction_id)
         {
+            self.balance.available += disputable_transaction.amount;
+            e.insert(disputable_transaction);
+            Ok(())
+        } else {
             Err(TransactionProcessingError::TransactionIDAlreadyExists(
                 disputable_transaction.transaction_id,
             ))
-        } else {
-            self.balance.available += disputable_transaction.amount;
-            self.disputable_transactions.insert(
-                disputable_transaction.transaction_id,
-                disputable_transaction,
-            );
-            Ok(())
         }
     }
 
@@ -149,71 +142,62 @@ impl ClientAccount {
     fn log_error(
         &self,
         debug_logger: &mut dyn std::io::Write,
-        _transaction: &ClientAccountTransaction,
-        _error: TransactionProcessingError,
+        transaction: &ClientAccountTransaction,
+        error: TransactionProcessingError,
     ) {
-        writeln!(debug_logger, "error processing transaction - {}", _error).unwrap();
-        writeln!(debug_logger, "{:?}", _transaction).unwrap();
+        writeln!(debug_logger, "error processing transaction - {}", error)
+            .expect("error writing to debug stream");
+        writeln!(debug_logger, "{:?}", transaction).expect("error writing to debug stream");
     }
 
     pub fn process_client_transaction(
         &mut self,
         transaction: ClientAccountTransaction,
         debug_logger: &mut dyn std::io::Write,
-    ) -> Result<(), TransactionProcessingError> {
-        match transaction.transaction_type {
+    ) {
+        let res: Result<(), TransactionProcessingError> = match transaction.transaction_type {
             TransactionType::Deposit => {
-                let deposit_transaction = DisputableTransaction::new_deposit_transaction(
-                    transaction.transaction_id,
-                    transaction
-                        .amount
-                        .expect("amount is required for a deposit"),
-                );
-                let res = self.process_disputable_transaction(deposit_transaction);
-                if let Err(inner_error) = res {
-                    self.log_error(debug_logger, &transaction, inner_error);
+                if let Some(amount) = transaction.amount {
+                    self.process_disputable_transaction(
+                        DisputableTransaction::new_deposit_transaction(
+                            transaction.transaction_id,
+                            amount,
+                        ),
+                    )
+                } else {
+                    Err(TransactionProcessingError::AmountNotPresentForDeposit(
+                        transaction.transaction_id,
+                    ))
                 }
             }
             TransactionType::Withdrawal => {
-                let deposit_transaction = DisputableTransaction::new_withdrawal_transaction(
-                    transaction.transaction_id,
-                    transaction
-                        .amount
-                        .expect("amount is required for a deposit"),
-                );
-                let res = self.process_disputable_transaction(deposit_transaction);
-                if let Err(inner_error) = res {
-                    self.log_error(debug_logger, &transaction, inner_error);
+                if let Some(amount) = transaction.amount {
+                    self.process_disputable_transaction(
+                        DisputableTransaction::new_withdrawal_transaction(
+                            transaction.transaction_id,
+                            amount,
+                        ),
+                    )
+                } else {
+                    Err(TransactionProcessingError::AmountNotPresentForWithdrawal(
+                        transaction.transaction_id,
+                    ))
                 }
             }
-            TransactionType::Dispute => {
-                let dispute_transaction =
-                    DisputeRelatedTransaction::new_dispute_transaction(transaction.transaction_id);
-                let res = self.process_dispute(dispute_transaction);
-                if let Err(inner_error) = res {
-                    self.log_error(debug_logger, &transaction, inner_error);
-                }
-            }
-            TransactionType::Resolve => {
-                let resolve_transaction =
-                    DisputeRelatedTransaction::new_resolve_transaction(transaction.transaction_id);
-                let res = self.process_resolve(resolve_transaction);
-                if let Err(inner_error) = res {
-                    self.log_error(debug_logger, &transaction, inner_error);
-                }
-            }
-            TransactionType::Chargeback => {
-                let resolve_transaction = DisputeRelatedTransaction::new_chargeback_transaction(
-                    transaction.transaction_id,
-                );
-                let res = self.process_chargeback(resolve_transaction);
-                if let Err(inner_error) = res {
-                    self.log_error(debug_logger, &transaction, inner_error);
-                }
-            }
-        }
+            TransactionType::Dispute => self.process_dispute(
+                DisputeRelatedTransaction::new_dispute_transaction(transaction.transaction_id),
+            ),
+            TransactionType::Resolve => self.process_resolve(
+                DisputeRelatedTransaction::new_resolve_transaction(transaction.transaction_id),
+            ),
+            TransactionType::Chargeback => self.process_chargeback(
+                DisputeRelatedTransaction::new_chargeback_transaction(transaction.transaction_id),
+            ),
+        };
 
-        Ok(())
+        if let Err(e) = res {
+            self.log_error(debug_logger, &transaction, e);
+        }
     }
 }
 
@@ -599,57 +583,115 @@ mod tests {
         fn it_should_ignore_errors_generated_from_process_disputable_transaction_when_transaction_id_already_exists(
         ) {
             let mut account = ClientAccount::new(1);
+            let mut debug_logger = Vec::<u8>::new();
 
-            account
-                .process_client_transaction(
-                    ClientAccountTransaction {
-                        transaction_type: TransactionType::Deposit,
-                        transaction_id: 1,
-                        amount: Some(100.0),
-                    },
-                    &mut std::io::sink(),
-                )
-                .unwrap();
-            assert_eq!(account.balance.available, 100.0);
-            assert_eq!(account.balance.held, 0.0);
-            assert_eq!(account.balance.total(), 100.0);
-            assert_eq!(account.locked, false);
-
-            assert_eq!(
-                account.process_client_transaction(
-                    ClientAccountTransaction {
-                        transaction_type: TransactionType::Deposit,
-                        transaction_id: 1,
-                        amount: Some(200.0),
-                    },
-                    &mut std::io::sink(),
-                ),
-                Ok(()),
+            account.process_client_transaction(
+                ClientAccountTransaction {
+                    transaction_type: TransactionType::Deposit,
+                    transaction_id: 1,
+                    amount: Some(100.0),
+                },
+                &mut debug_logger,
             );
             assert_eq!(account.balance.available, 100.0);
             assert_eq!(account.balance.held, 0.0);
             assert_eq!(account.balance.total(), 100.0);
             assert_eq!(account.locked, false);
+            let error_log_str = std::str::from_utf8(&debug_logger).unwrap();
+            assert_eq!(error_log_str, "",);
 
-            assert_eq!(
-                account.process_client_transaction(
-                    ClientAccountTransaction {
-                        transaction_type: TransactionType::Withdrawal,
-                        transaction_id: 1,
-                        amount: Some(50.0),
-                    },
-                    &mut std::io::sink(),
-                ),
-                Ok(()),
+            // another transaction (deposit) with the same transaction id
+            account.process_client_transaction(
+                ClientAccountTransaction {
+                    transaction_type: TransactionType::Deposit,
+                    transaction_id: 1,
+                    amount: Some(200.0),
+                },
+                &mut debug_logger,
             );
             assert_eq!(account.balance.available, 100.0);
             assert_eq!(account.balance.held, 0.0);
             assert_eq!(account.balance.total(), 100.0);
             assert_eq!(account.locked, false);
+            let error_log_str = std::str::from_utf8(&debug_logger).unwrap();
+            assert!(
+                error_log_str.contains("error processing transaction - TransactionIDAlreadyExists")
+            );
+            assert!(error_log_str.contains("Deposit"));
+            assert!(error_log_str.contains("transaction_id: 1"));
+            debug_logger.clear();
+
+            // another transaction (withdrawal) with the same transaction id
+
+            account.process_client_transaction(
+                ClientAccountTransaction {
+                    transaction_type: TransactionType::Withdrawal,
+                    transaction_id: 1,
+                    amount: Some(50.0),
+                },
+                &mut debug_logger,
+            );
+            assert_eq!(account.balance.available, 100.0);
+            assert_eq!(account.balance.held, 0.0);
+            assert_eq!(account.balance.total(), 100.0);
+            assert_eq!(account.locked, false);
+            let error_log_str = std::str::from_utf8(&debug_logger).unwrap();
+            assert!(
+                error_log_str.contains("error processing transaction - TransactionIDAlreadyExists")
+            );
+            assert!(error_log_str.contains("Withdrawal"));
+            assert!(error_log_str.contains("transaction_id: 1"));
+            debug_logger.clear();
         }
 
         #[test]
-        fn it_should_ignore_deposit_and_withdrawal_transactions_with_no_amount() {}
+        fn it_should_ignore_deposit_and_withdrawal_transactions_with_no_amount() {
+            let mut account = ClientAccount::new(1);
+            let mut debug_logger = Vec::<u8>::new();
+
+            // deposit
+            account.process_client_transaction(
+                ClientAccountTransaction {
+                    transaction_type: TransactionType::Deposit,
+                    transaction_id: 1,
+                    amount: None,
+                },
+                &mut debug_logger,
+            );
+            assert_eq!(account.balance.available, 0.0);
+            assert_eq!(account.balance.held, 0.0);
+            assert_eq!(account.balance.total(), 0.0);
+            assert_eq!(account.locked, false);
+
+            let error_log_str = std::str::from_utf8(&debug_logger).unwrap();
+            assert!(
+                error_log_str.contains("error processing transaction - AmountNotPresentForDeposit")
+            );
+            assert!(error_log_str.contains("Deposit"));
+            assert!(error_log_str.contains("transaction_id: 1"));
+            debug_logger.clear();
+
+            // same for a withdrawal
+            account.process_client_transaction(
+                ClientAccountTransaction {
+                    transaction_type: TransactionType::Withdrawal,
+                    transaction_id: 1,
+                    amount: None,
+                },
+                &mut debug_logger,
+            );
+            assert_eq!(account.balance.available, 0.0);
+            assert_eq!(account.balance.held, 0.0);
+            assert_eq!(account.balance.total(), 0.0);
+            assert_eq!(account.locked, false);
+
+            let error_log_str = std::str::from_utf8(&debug_logger).unwrap();
+            assert!(error_log_str
+                .contains("error processing transaction - AmountNotPresentForWithdrawal"));
+            assert!(error_log_str.contains("Withdrawal"));
+            assert!(error_log_str.contains("transaction_id: 1"));
+            debug_logger.clear();
+        }
 
         // This test makes sure that errors generated from the process_dispute, process_resolve, and process_chargeback
         // are ignored. Why not just not have them return an error and ignore the conditions that generate the error?
@@ -661,16 +703,13 @@ mod tests {
             let mut account = ClientAccount::new(1);
             let mut debug_logger = Vec::<u8>::new();
 
-            assert_eq!(
-                account.process_client_transaction(
-                    ClientAccountTransaction {
-                        transaction_type: TransactionType::Dispute,
-                        transaction_id: 1,
-                        amount: None,
-                    },
-                    &mut debug_logger,
-                ),
-                Ok(()),
+            account.process_client_transaction(
+                ClientAccountTransaction {
+                    transaction_type: TransactionType::Dispute,
+                    transaction_id: 1,
+                    amount: None,
+                },
+                &mut debug_logger,
             );
             let error_log_str = std::str::from_utf8(&debug_logger).unwrap();
             assert!(error_log_str
@@ -679,16 +718,13 @@ mod tests {
             assert!(error_log_str.contains("transaction_id: 1"));
             debug_logger.clear();
 
-            assert_eq!(
-                account.process_client_transaction(
-                    ClientAccountTransaction {
-                        transaction_type: TransactionType::Resolve,
-                        transaction_id: 1,
-                        amount: None,
-                    },
-                    &mut debug_logger,
-                ),
-                Ok(()),
+            account.process_client_transaction(
+                ClientAccountTransaction {
+                    transaction_type: TransactionType::Resolve,
+                    transaction_id: 1,
+                    amount: None,
+                },
+                &mut debug_logger,
             );
             let error_log_str = std::str::from_utf8(&debug_logger).unwrap();
             assert!(error_log_str
@@ -697,16 +733,13 @@ mod tests {
             assert!(error_log_str.contains("transaction_id: 1"));
             debug_logger.clear();
 
-            assert_eq!(
-                account.process_client_transaction(
-                    ClientAccountTransaction {
-                        transaction_type: TransactionType::Chargeback,
-                        transaction_id: 1,
-                        amount: None,
-                    },
-                    &mut debug_logger,
-                ),
-                Ok(()),
+            account.process_client_transaction(
+                ClientAccountTransaction {
+                    transaction_type: TransactionType::Chargeback,
+                    transaction_id: 1,
+                    amount: None,
+                },
+                &mut debug_logger,
             );
             let error_log_str = std::str::from_utf8(&debug_logger).unwrap();
             assert!(error_log_str
@@ -728,9 +761,7 @@ mod tests {
                 transaction_id: 1,
                 amount: Some(100.0),
             };
-            account
-                .process_client_transaction(deposit, &mut debug_logger)
-                .unwrap();
+            account.process_client_transaction(deposit, &mut debug_logger);
             assert_eq!(account.disputable_transactions.len(), 1);
             assert_eq!(account.balance.available, 100.0);
             assert_eq!(account.balance.held, 0.0);
@@ -743,9 +774,7 @@ mod tests {
                 transaction_id: 2,
                 amount: Some(10.0),
             };
-            account
-                .process_client_transaction(transaction_to_dispute, &mut debug_logger)
-                .unwrap();
+            account.process_client_transaction(transaction_to_dispute, &mut debug_logger);
             assert_eq!(account.disputable_transactions.len(), 2);
             assert_eq!(account.balance.available, 110.0);
             assert_eq!(account.balance.held, 0.0);
@@ -758,9 +787,7 @@ mod tests {
                 transaction_id: 2,
                 amount: None,
             };
-            account
-                .process_client_transaction(dispute, &mut debug_logger)
-                .unwrap();
+            account.process_client_transaction(dispute, &mut debug_logger);
             assert_eq!(account.disputable_transactions.len(), 2);
             assert_eq!(account.balance.available, 100.0);
             assert_eq!(account.balance.held, 10.0);
@@ -778,9 +805,7 @@ mod tests {
                 transaction_id: 2,
                 amount: None,
             };
-            account
-                .process_client_transaction(resolve, &mut debug_logger)
-                .unwrap();
+            account.process_client_transaction(resolve, &mut debug_logger);
 
             assert_eq!(account.disputable_transactions.len(), 2);
             assert_eq!(account.balance.available, 110.0);

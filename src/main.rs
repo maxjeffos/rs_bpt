@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use structopt::StructOpt;
 
-use rs_bpt::process_transactions_file;
+use rs_bpt::cli;
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "rs_bpt", about = "Batch process transactions")]
@@ -15,16 +15,9 @@ struct Opt {
     input: PathBuf,
 }
 
-fn cli(
-    input_file: &str,
-    debug_logger: &mut dyn std::io::Write,
-) -> Result<(), Box<dyn std::error::Error>> {
-    process_transactions_file(input_file.to_string(), debug_logger)
-}
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let opt = Opt::from_args();
-    let transactions_file = opt.input.to_str().unwrap();
+    let transactions_file = opt.input;
     let debug = opt.debug;
 
     let mut debug_logger: Box<dyn std::io::Write> = if debug {
@@ -33,5 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Box::new(std::io::sink())
     };
 
-    cli(transactions_file, &mut debug_logger)
+    let mut stdout_stream = Box::new(std::io::stdout());
+
+    cli(transactions_file, &mut stdout_stream, &mut debug_logger)
 }
