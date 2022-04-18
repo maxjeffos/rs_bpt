@@ -1,6 +1,6 @@
 # rs_bpt
 
-An experiment in batch processing transactions in Rust.
+An experiment in CLI tool writing and batch processing financial transactions in Rust.
 
 
 ## Usage
