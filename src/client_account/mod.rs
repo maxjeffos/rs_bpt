@@ -157,27 +157,44 @@ impl ClientAccount {
     ) -> Result<(), TransactionProcessingError> {
         match transaction.transaction_type {
             TransactionType::Deposit => {
-                let deposit_transaction = DisputableTransaction::new_deposit_transaction(
-                    transaction.transaction_id,
-                    transaction
-                        .amount
-                        .expect("amount is required for a deposit"),
-                );
-                let res = self.process_disputable_transaction(deposit_transaction);
-                if let Err(inner_error) = res {
-                    self.log_error(debug_logger, &transaction, inner_error);
+                if let Some(amount) = transaction.amount {
+                    let deposit_transaction = DisputableTransaction::new_deposit_transaction(
+                        transaction.transaction_id,
+                        amount,
+                    );
+
+                    let res = self.process_disputable_transaction(deposit_transaction);
+                    if let Err(inner_error) = res {
+                        self.log_error(debug_logger, &transaction, inner_error);
+                    }
+                } else {
+                    self.log_error(
+                        debug_logger,
+                        &transaction,
+                        TransactionProcessingError::AmountNotPresentForDeposit(
+                            transaction.transaction_id,
+                        ),
+                    )
                 }
             }
             TransactionType::Withdrawal => {
-                let deposit_transaction = DisputableTransaction::new_withdrawal_transaction(
-                    transaction.transaction_id,
-                    transaction
-                        .amount
-                        .expect("amount is required for a deposit"),
-                );
-                let res = self.process_disputable_transaction(deposit_transaction);
-                if let Err(inner_error) = res {
-                    self.log_error(debug_logger, &transaction, inner_error);
+                if let Some(amount) = transaction.amount {
+                    let deposit_transaction = DisputableTransaction::new_withdrawal_transaction(
+                        transaction.transaction_id,
+                        amount,
+                    );
+                    let res = self.process_disputable_transaction(deposit_transaction);
+                    if let Err(inner_error) = res {
+                        self.log_error(debug_logger, &transaction, inner_error);
+                    }
+                } else {
+                    self.log_error(
+                        debug_logger,
+                        &transaction,
+                        TransactionProcessingError::AmountNotPresentForWithdrawal(
+                            transaction.transaction_id,
+                        ),
+                    )
                 }
             }
             TransactionType::Dispute => {
@@ -643,7 +660,57 @@ mod tests {
         }
 
         #[test]
-        fn it_should_ignore_deposit_and_withdrawal_transactions_with_no_amount() {}
+        fn it_should_ignore_deposit_and_withdrawal_transactions_with_no_amount() {
+            let mut account = ClientAccount::new(1);
+            let mut debug_logger = Vec::<u8>::new();
+
+            // deposit
+            account
+                .process_client_transaction(
+                    ClientAccountTransaction {
+                        transaction_type: TransactionType::Deposit,
+                        transaction_id: 1,
+                        amount: None,
+                    },
+                    &mut debug_logger,
+                )
+                .unwrap();
+            assert_eq!(account.balance.available, 0.0);
+            assert_eq!(account.balance.held, 0.0);
+            assert_eq!(account.balance.total(), 0.0);
+            assert_eq!(account.locked, false);
+
+            let error_log_str = std::str::from_utf8(&debug_logger).unwrap();
+            assert!(
+                error_log_str.contains("error processing transaction - AmountNotPresentForDeposit")
+            );
+            assert!(error_log_str.contains("Deposit"));
+            assert!(error_log_str.contains("transaction_id: "));
+            debug_logger.clear();
+
+            // same for a withdrawal
+            account
+                .process_client_transaction(
+                    ClientAccountTransaction {
+                        transaction_type: TransactionType::Withdrawal,
+                        transaction_id: 1,
+                        amount: None,
+                    },
+                    &mut debug_logger,
+                )
+                .unwrap();
+            assert_eq!(account.balance.available, 0.0);
+            assert_eq!(account.balance.held, 0.0);
+            assert_eq!(account.balance.total(), 0.0);
+            assert_eq!(account.locked, false);
+
+            let error_log_str = std::str::from_utf8(&debug_logger).unwrap();
+            assert!(error_log_str
+                .contains("error processing transaction - AmountNotPresentForWithdrawal"));
+            assert!(error_log_str.contains("Withdrawal"));
+            assert!(error_log_str.contains("transaction_id: "));
+            debug_logger.clear();
+        }
 
         // This test makes sure that errors generated from the process_dispute, process_resolve, and process_chargeback
         // are ignored. Why not just not have them return an error and ignore the conditions that generate the error?

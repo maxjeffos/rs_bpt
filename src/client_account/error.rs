@@ -6,6 +6,8 @@ pub enum TransactionProcessingError {
     TransactionAlreadyHasPendingDisupte(TransactionId),
     TransactionDoesNotHavePendingDisupte(TransactionId),
     TransactionIDAlreadyExists(TransactionId),
+    AmountNotPresentForDeposit(TransactionId),
+    AmountNotPresentForWithdrawal(TransactionId),
 }
 
 impl std::error::Error for TransactionProcessingError {}
@@ -24,6 +26,12 @@ impl std::fmt::Display for TransactionProcessingError {
             }
             TransactionProcessingError::TransactionIDAlreadyExists(t) => {
                 write!(f, "TransactionIDAlreadyExists: {}", t)
+            }
+            TransactionProcessingError::AmountNotPresentForDeposit(t) => {
+                write!(f, "AmountNotPresentForDeposit: {}", t)
+            }
+            TransactionProcessingError::AmountNotPresentForWithdrawal(t) => {
+                write!(f, "AmountNotPresentForWithdrawal: {}", t)
             }
         }
     }
